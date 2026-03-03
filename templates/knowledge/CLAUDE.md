@@ -22,6 +22,7 @@ fd -e md . .claude/knowledge/entries/ | fzf
 
 # Search by tag
 rg '#pitfall' .claude/knowledge/entries/
+rg '#docker.*#pitfall' .claude/knowledge/entries/
 
 # List all titles
 rg '^title:' .claude/knowledge/entries/
@@ -34,12 +35,7 @@ rg '^status: active' .claude/knowledge/entries/
 
 Add new tags here. Reuse existing tags when possible.
 
-| Category | Tags |
-|----------|------|
-| Technology/Service | |
-| Tool/Method | |
-| Activity | |
-| Nature | `#pitfall` |
+`#pitfall`
 
 ## Rules
 

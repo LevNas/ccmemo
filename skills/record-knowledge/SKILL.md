@@ -22,12 +22,12 @@ Capture tacit knowledge discovered during work and make it available for future 
 1. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` with YAML frontmatter
 2. For new discoveries without enough detail yet, write a temporary note in the working directory and convert to an entry later
 3. Do NOT add links to subdirectory `CLAUDE.md` files — use tag search to find entries instead
-4. Report the recorded content to the user
+4. Claude Code acts autonomously — create and edit entries without asking for user confirmation
 
 ## Entry Location
 - `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` — one file per entry
 - Timestamp prefix ensures chronological ordering and collision avoidance
-- Author field uses your Git hosting platform username (without `@`)
+- Author field uses your Git hosting platform account name (without `@`)
 - Slug is descriptive kebab-case
 - Example: `20260302-143052-alice-docker-compose-port-conflict.md`
 - Existing entries without timestamp prefix remain as-is (no rename required)
@@ -53,14 +53,8 @@ tags: "#tag1 #tag2 ..."
 ### Tag Guidelines
 - Claude Code assigns tags autonomously for optimal searchability
 - Naming: lowercase kebab-case with `#` prefix (e.g., `#docker`, `#typescript`, `#pitfall`)
-- Assign from multiple dimensions:
-  - **Technology/Service**: `#docker`, `#postgresql`, `#kubernetes`, `#github-actions` ...
-  - **Tool/Method**: `#bash`, `#terraform`, `#api`, `#cli` ...
-  - **Activity**: `#installation`, `#migration`, `#deployment`, `#debugging` ...
-  - **Nature**: `#pitfall`, `#documentation-error`, `#design-practice`, `#workaround` ...
-- Add new tags freely as needed (no pre-registration required)
-- Check the tag registry in `.claude/knowledge/CLAUDE.md` before creating new tags
-- Example: `rg '#pitfall' .claude/knowledge/entries/`
+- Add new tags freely as needed
+- Check the tag registry in `.claude/knowledge/CLAUDE.md` before creating new tags to avoid duplicates
 
 ### ref / see Link Format
 - Use Markdown links for URLs and repo paths (clickable in your Git hosting platform's web UI)
@@ -70,7 +64,7 @@ tags: "#tag1 #tag2 ..."
 ### see Links (Synapse Formation Between Entries)
 - Add `see:` links to related entries when creating or editing an entry
 - Within `entries/`, use filename only: `- see: [title](slug.md) — relationship`
-- Describe the relationship briefly after `—` (e.g., "related port conflict", "prerequisite step")
+- Describe the relationship briefly after `—` (e.g., "another port conflict", "prerequisite step")
 - Relevance criteria:
   - **Sequential steps**: procedure step dependencies, workflow stages
   - **Same technology, different pitfalls**: multiple gotchas for one tool
@@ -97,4 +91,4 @@ tags: "#tag1 #tag2 ..."
 1. Extract knowledge from user input or work discoveries
 2. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry)
 3. Add see links to related existing entries if applicable
-4. Report the recorded content to the user
+4. Briefly notify the user what was recorded (no confirmation needed beforehand)

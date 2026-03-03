@@ -95,14 +95,13 @@ rg '^status: active' .claude/knowledge/entries/ -l | xargs rg '<keyword>' -l
 
 ### Tags
 
-Edit `.claude/knowledge/CLAUDE.md` to maintain a tag registry for your project. Tags use lowercase kebab-case with `#` prefix:
+Edit `.claude/knowledge/CLAUDE.md` to maintain a tag registry for your project. Tags use lowercase kebab-case with `#` prefix as a flat list:
 
-| Category | Tags |
-|----------|------|
-| Technology/Service | `#docker`, `#postgresql`, `#react` |
-| Tool/Method | `#bash`, `#terraform`, `#api` |
-| Activity | `#installation`, `#migration`, `#deployment` |
-| Nature | `#pitfall`, `#workaround`, `#design-practice` |
+```
+`#docker` `#postgresql` `#react` `#pitfall` `#workaround` `#design-practice`
+```
+
+Claude Code checks the registry before creating new tags to avoid duplicates.
 
 ### Entry Author
 
