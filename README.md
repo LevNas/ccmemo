@@ -91,6 +91,91 @@ rg '^status: active' .claude/knowledge/entries/ -l | xargs rg '<keyword>' -l
 \```
 ```
 
+## Example: CLAUDE.md Configuration
+
+Below is a practical example of how to configure your project's `.claude/CLAUDE.md` to integrate the knowledge base into Claude Code's workflow. This setup ensures Claude Code automatically checks relevant entries before starting work and records new discoveries autonomously.
+
+### Knowledge Recording Rules
+
+Add these rules to your project's `CLAUDE.md` to control how Claude Code interacts with the knowledge base:
+
+```markdown
+## Knowledge Recording
+- Aggregate knowledge in `.claude/knowledge/entries/` as one file per entry (with YAML frontmatter)
+- Entries are mutable — edit in place, rely on git for history
+- See `/record-knowledge` skill for format and consolidation procedures
+```
+
+### Knowledge Base Lookup
+
+Add a lookup section so Claude Code searches for relevant entries at the start of each task. You can adjust the strategy based on expected result volume:
+
+```markdown
+## Knowledge Base Lookup
+
+Before starting work, search for relevant active knowledge entries.
+Use the Explore subagent for searches that may hit multiple entries (keeps main context clean).
+
+### Search (multiple entries expected)
+
+Delegate to Explore subagent:
+- "Search `.claude/knowledge/entries/` for active entries related to `<keyword>` and summarize relevant findings"
+- The subagent reads entries and returns only a concise summary to the main context
+
+### Search (single entry expected)
+
+Read directly — subagent overhead is unnecessary:
+\```bash
+rg '^status: active' .claude/knowledge/entries/ -l | xargs rg '<keyword>' -l
+\```
+Then Read the matching file.
+
+### Rules
+- Only reference entries with `status: active` — ignore `deprecated` entries
+- Replace `<keyword>` with terms relevant to the current task (service name, technology, etc.)
+```
+
+### Workflow Integration
+
+You can reference the knowledge system from other workflow rules in `CLAUDE.md`. For example:
+
+```markdown
+## Workflow Rules
+- Add rules to CLAUDE.md when the user points out a recurring mistake
+
+## Progress Update
+When the user says "update progress", execute all of the following:
+1. ...
+2. Record any knowledge gained during work to the relevant CLAUDE.md
+```
+
+This way, Claude Code naturally records discoveries as part of its normal workflow — no manual intervention required.
+
+## Why Use It in a Git Repository
+
+This knowledge base is designed to live inside a Git repository (GitHub, GitLab, etc.) and be committed alongside your code. This brings several benefits:
+
+### Share tacit knowledge with your team
+
+Knowledge entries are plain Markdown files in the repository. Every team member — and every Claude Code session they start — can access the same accumulated knowledge. Pitfalls one person discovers on Monday are available to the entire team on Tuesday, without anyone needing to remember to share them.
+
+This is especially valuable for:
+- **Onboarding**: New members inherit the project's accumulated wisdom from day one
+- **Async collaboration**: Discoveries made in one session are preserved for others working in different time zones or schedules
+- **Knowledge retention**: When team members rotate off a project, their discoveries remain in the repository
+
+### Survive across Claude Code sessions
+
+Claude Code starts each session with a fresh context. Without persistent storage, every discovery — environment quirks, failed approaches, configuration gotchas — is lost when the session ends. The knowledge base solves this: entries written in one session are automatically available in the next, giving Claude Code a form of long-term memory anchored to the project.
+
+### Stay in sync with the code
+
+Because entries live in the same repository as the code, they follow the same branch/merge/review workflow. Knowledge stays versioned alongside the code it describes. When code changes make an entry obsolete, the proximity makes it easy to notice and update.
+
+### Browsable in your Git hosting platform's web UI
+
+Entries use Markdown with relative links, so they render cleanly in GitHub and GitLab's web interface. Team members can browse, search, and review knowledge without any special tooling — just a web browser.
+
 ## Customization
 
 ### Tags
