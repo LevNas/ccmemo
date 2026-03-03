@@ -186,32 +186,32 @@ This way, Claude Code naturally manages plans and records discoveries as part of
 
 ## Why Use It in a Git Repository
 
-This knowledge base is designed to live inside a Git repository (GitHub, GitLab, etc.) and be committed alongside your code. This brings several benefits:
+Both the knowledge base and plan persistence are designed to live inside a Git repository (GitHub, GitLab, etc.) and be committed alongside your code. This brings several benefits:
 
-### Share tacit knowledge with your team
+### Share context with your team
 
-Knowledge entries are plain Markdown files in the repository. Every team member — and every Claude Code session they start — can access the same accumulated knowledge. Pitfalls one person discovers on Monday are available to the entire team on Tuesday, without anyone needing to remember to share them.
+Knowledge entries and plans are plain Markdown files in the repository. Every team member — and every Claude Code session they start — can access the same accumulated knowledge and see the status of ongoing work. Pitfalls one person discovers on Monday are available to the entire team on Tuesday. A plan started by one member can be resumed by another.
 
 This is especially valuable for:
-- **Onboarding**: New members inherit the project's accumulated wisdom from day one
-- **Async collaboration**: Discoveries made in one session are preserved for others working in different time zones or schedules
-- **Knowledge retention**: When team members rotate off a project, their discoveries remain in the repository
+- **Onboarding**: New members inherit the project's accumulated wisdom and can see current work plans from day one
+- **Async collaboration**: Discoveries and plans made in one session are preserved for others working in different time zones or schedules
+- **Knowledge retention**: When team members rotate off a project, their discoveries and work context remain in the repository
 
 ### Survive across Claude Code sessions
 
-Claude Code starts each session with a fresh context. Without persistent storage, every discovery — environment quirks, failed approaches, configuration gotchas — is lost when the session ends. The knowledge base solves this: entries written in one session are automatically available in the next, giving Claude Code a form of long-term memory anchored to the project.
+Claude Code starts each session with a fresh context. Without persistent storage, every discovery — environment quirks, failed approaches, configuration gotchas — and every work plan is lost when the session ends. ccmemo solves this: knowledge entries and task progress written in one session are automatically available in the next, giving Claude Code a form of long-term memory anchored to the project.
 
 ### Stay in sync with the code
 
-Because entries live in the same repository as the code, they follow the same branch/merge/review workflow. Knowledge stays versioned alongside the code it describes. When code changes make an entry obsolete, the proximity makes it easy to notice and update.
+Because everything lives in the same repository as the code, it follows the same branch/merge/review workflow. Knowledge and plans stay versioned alongside the code they describe. When code changes make an entry or plan obsolete, the proximity makes it easy to notice and update.
 
 ### Browsable in your Git hosting platform's web UI
 
-Entries use Markdown with relative links, so they render cleanly in GitHub and GitLab's web interface. Team members can browse, search, and review knowledge without any special tooling — just a web browser.
+All files use Markdown with relative links, so they render cleanly in GitHub and GitLab's web interface. Team members can browse, search, and review knowledge entries and plans without any special tooling — just a web browser.
 
 ## Customization
 
-### Tags
+### Tags (Knowledge Base)
 
 Edit `.claude/knowledge/CLAUDE.md` to maintain a tag registry for your project. Tags use lowercase kebab-case with `#` prefix as a flat list:
 
@@ -221,13 +221,17 @@ Edit `.claude/knowledge/CLAUDE.md` to maintain a tag registry for your project. 
 
 Claude Code checks the registry before creating new tags to avoid duplicates.
 
-### Entry Author
+### Entry Author (Knowledge Base)
 
 The `author` field in entries defaults to `@<username>`. Set this to match your Git hosting platform username.
 
+### Issue Tracker Integration (Plan & Task)
+
+Plans can optionally link to issues. Edit `skills/plan-task/SKILL.md` to add project-specific conventions — for example, specifying your issue tracker's comment format or commit message conventions.
+
 ### Integration with Project Workflow
 
-You can extend the skill by editing `SKILL.md` to fit your workflow — for example, adding project-specific tag categories or linking to your issue tracker.
+You can extend either skill by editing its `SKILL.md` to fit your workflow — for example, adding project-specific tag categories, linking to your issue tracker, or customizing plan templates.
 
 ## License
 
