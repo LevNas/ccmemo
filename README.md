@@ -1,22 +1,26 @@
 # ccmemo
 
-A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill and knowledge base template for capturing tacit knowledge — quirks, pitfalls, decisions, and lessons learned — directly into your project repository.
+A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill and template collection for persistent knowledge and plan management across sessions.
 
 ## What It Does
 
-- Provides a `/record-knowledge` skill that Claude Code uses to capture discoveries during work
-- Stores knowledge as individual Markdown files with YAML frontmatter in `.claude/knowledge/entries/`
-- Supports tagging, cross-referencing (synapse links), and full-text search
-- Entries are mutable — edit in place, with git tracking change history
+- **Knowledge Base** (`/record-knowledge`): Captures tacit knowledge — quirks, pitfalls, decisions — as tagged Markdown entries in `.claude/knowledge/entries/`
+- **Plan & Task Persistence** (`/plan-task`): Maintains multi-step plans and task progress across sessions in `.claude/tasks/`
 
 ## Install
 
-Copy the skill and knowledge base template into your project:
+Copy the skills and templates you need into your project:
 
 ```bash
 # From your project root
+
+# Knowledge base (record-knowledge)
 cp -r path/to/ccmemo/skills/record-knowledge .claude/skills/record-knowledge
 cp -r path/to/ccmemo/templates/knowledge .claude/knowledge
+
+# Plan & task persistence (plan-task)
+cp -r path/to/ccmemo/skills/plan-task .claude/skills/plan-task
+cp -r path/to/ccmemo/templates/tasks .claude/tasks
 ```
 
 Your project should now have:
@@ -25,12 +29,17 @@ Your project should now have:
 your-project/
 └── .claude/
     ├── skills/
-    │   └── record-knowledge/
+    │   ├── record-knowledge/
+    │   │   └── SKILL.md
+    │   └── plan-task/
     │       └── SKILL.md
-    └── knowledge/
+    ├── knowledge/
+    │   ├── CLAUDE.md
+    │   └── entries/
+    │       └── .gitkeep
+    └── tasks/
         ├── CLAUDE.md
-        └── entries/
-            └── .gitkeep
+        └── readme.md
 ```
 
 ## Usage
@@ -76,6 +85,18 @@ rg '^title:' .claude/knowledge/entries/
 # Active entries only
 rg '^status: active' .claude/knowledge/entries/
 ```
+
+### Plan & Task Management
+
+Claude Code uses `/plan-task` to persist multi-step plans across sessions. The workflow:
+
+1. **Create**: Start a plan with `plan-v1.md`, `todo.md`, and `readme.md` in `.claude/tasks/<slug>-<account>-<date>/`
+2. **Work**: Update `todo.md` as tasks progress (`[ ]` → `[~]` → `[x]`)
+3. **Revise**: If the plan changes, create `plan-v2.md` (previous versions are preserved)
+4. **Pause/Resume**: On session end, update the plan's `readme.md` with handoff notes. Next session checks `.claude/tasks/readme.md` for incomplete plans
+5. **Complete**: Mark done in both the plan directory and the task index
+
+If your project uses an issue tracker, plans can optionally link to issues for bidirectional progress tracking.
 
 ### Using Knowledge in CLAUDE.md
 
@@ -135,21 +156,33 @@ Then Read the matching file.
 - Replace `<keyword>` with terms relevant to the current task (service name, technology, etc.)
 ```
 
+### Plan Persistence
+
+Add these rules so Claude Code maintains plans across sessions:
+
+```markdown
+## Plan Persistence
+- Save plans and work status as files in `.claude/tasks/` (see `.claude/tasks/CLAUDE.md` for details)
+- At session start, check `.claude/tasks/readme.md` for incomplete plans before starting work
+```
+
 ### Workflow Integration
 
-You can reference the knowledge system from other workflow rules in `CLAUDE.md`. For example:
+You can reference both systems from other workflow rules in `CLAUDE.md`. For example:
 
 ```markdown
 ## Workflow Rules
+- Start with plan mode for tasks with 3+ steps
 - Add rules to CLAUDE.md when the user points out a recurring mistake
 
 ## Progress Update
 When the user says "update progress", execute all of the following:
-1. ...
-2. Record any knowledge gained during work to the relevant CLAUDE.md
+1. Update `.claude/tasks/` todo.md and readme.md
+2. Record any knowledge gained during work
+3. Commit and push changes
 ```
 
-This way, Claude Code naturally records discoveries as part of its normal workflow — no manual intervention required.
+This way, Claude Code naturally manages plans and records discoveries as part of its normal workflow — no manual intervention required.
 
 ## Why Use It in a Git Repository
 
