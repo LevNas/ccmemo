@@ -56,6 +56,14 @@ tags: "#tag1 #tag2 ..."
 - Add new tags freely as needed
 - Check the tag registry in `.claude/knowledge/CLAUDE.md` before creating new tags to avoid duplicates
 
+#### Similarity Check (on every entry creation)
+Before assigning tags to a new entry, scan the tag registry for near-duplicates:
+- **Singular/plural**: `#backup` vs `#backups` → use the existing form
+- **Abbreviation/full**: `#k8s` vs `#kubernetes` → use the existing form
+- **Synonym**: `#error` vs `#bug` → use the existing form
+- **Substring overlap**: `#windows-service` vs `#win-service` → use the existing form
+If a near-duplicate is found, reuse the existing tag. Do not create a new one.
+
 ### ref / see Link Format
 - Use Markdown links for URLs and repo paths (clickable in your Git hosting platform's web UI)
   - External: `- ref: [title](https://example.com/...)`
@@ -89,6 +97,9 @@ tags: "#tag1 #tag2 ..."
 
 ## Procedure
 1. Extract knowledge from user input or work discoveries
-2. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry)
-3. Add see links to related existing entries if applicable
-4. Briefly notify the user what was recorded (no confirmation needed beforehand)
+2. Read the tag registry in `.claude/knowledge/CLAUDE.md`
+3. Select tags — reuse existing tags; check for near-duplicates before creating any new tag
+4. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry)
+5. If a new tag was created, add it to the tag registry
+6. Add see links to related existing entries if applicable
+7. Briefly notify the user what was recorded (no confirmation needed beforehand)
