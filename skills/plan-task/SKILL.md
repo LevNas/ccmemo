@@ -10,6 +10,32 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 
 Maintain plans and task progress across Claude Code sessions so that work can be resumed without losing context.
 
+## Two Modes
+
+Choose the mode that fits your team's workflow:
+
+| | Git-tracked mode | Issue-centric mode |
+|---|---|---|
+| Primary source of truth | `.claude/tasks/` (committed to Git) | Issue tracker (GitLab, GitHub, Jira, etc.) |
+| `.claude/tasks/` role | Shared plan/task storage | Local working memo (gitignored) |
+| Team visibility | Via Git commits | Via issue tracker |
+| Best for | Small teams, single-repo projects | Teams already using an issue tracker |
+
+### Issue-centric mode
+
+When an issue tracker is the primary source of truth:
+
+- `.claude/tasks/` is **gitignored** — add `.claude/tasks/` to `.gitignore`
+- Plans and progress live in the issue tracker; `.claude/tasks/` is a local scratchpad for the current session
+- Anything worth sharing with the team belongs in the issue tracker, not in `.claude/tasks/`
+- At session start, check assigned issues (`glab issue list --assignee=@me` or equivalent) instead of `.claude/tasks/readme.md`
+
+The rest of this document describes **Git-tracked mode**. For issue-centric mode, adapt the procedures below: use `.claude/tasks/` as a local memo and post shared artifacts to the issue tracker.
+
+---
+
+## Git-tracked mode
+
 ## When to Use
 
 - Starting a multi-step task that may span multiple sessions

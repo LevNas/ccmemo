@@ -88,7 +88,11 @@ rg '^status: active' .claude/knowledge/entries/
 
 ### Plan & Task Management
 
-Claude Code uses `/plan-task` to persist multi-step plans across sessions. The workflow:
+Claude Code uses `/plan-task` to persist multi-step plans across sessions. Two modes are available:
+
+#### Git-tracked mode (default)
+
+`.claude/tasks/` is committed to Git and serves as the shared source of truth:
 
 1. **Create**: Start a plan with `plan-v1.md`, `todo.md`, and `readme.md` in `.claude/tasks/<slug>-<account>-<date>/`
 2. **Work**: Update `todo.md` as tasks progress (`[ ]` → `[~]` → `[x]`)
@@ -97,6 +101,17 @@ Claude Code uses `/plan-task` to persist multi-step plans across sessions. The w
 5. **Complete**: Mark done in both the plan directory and the task index
 
 If your project uses an issue tracker, plans can optionally link to issues for bidirectional progress tracking.
+
+#### Issue-centric mode
+
+For teams already using an issue tracker (GitLab, GitHub Issues, Jira, etc.) as the primary source of truth:
+
+1. **Gitignore tasks**: Add `.claude/tasks/` to `.gitignore`
+2. **Use issue tracker**: Plans, progress, and decisions live in the issue tracker
+3. **Local scratchpad**: `.claude/tasks/` becomes a local working memo for the current session
+4. **Session start**: Check assigned issues (e.g., `glab issue list --assignee=@me`) instead of `.claude/tasks/readme.md`
+
+See the [CLAUDE.md sample](#issue-centric-plan-persistence) below for configuration examples.
 
 ### Using Knowledge in CLAUDE.md
 
@@ -114,11 +129,45 @@ rg '^status: active' .claude/knowledge/entries/ -l | xargs rg '<keyword>' -l
 
 ## Example: CLAUDE.md Configuration
 
-Below is a practical example of how to configure your project's `.claude/CLAUDE.md` to integrate the knowledge base into Claude Code's workflow. This setup ensures Claude Code automatically checks relevant entries before starting work and records new discoveries autonomously.
+Below is a practical example of how to configure your project's `CLAUDE.md` to integrate ccmemo into Claude Code's workflow. Adapt the sections you need.
+
+### Thinking Partner Declaration
+
+Claude Code is not just a coding assistant — it can also serve as a thinking partner. Declare this role explicitly:
+
+```markdown
+# Project Harness
+
+Claude Code is not just a coding assistant — it also serves as a "thinking partner."
+```
+
+### What to Optimize For
+
+```markdown
+## What to optimize for
+- Reproducibility over cleverness
+- Small diffs, fast feedback loops
+- Simplicity — but never at the cost of usability
+```
+
+### Response Quality
+
+Help Claude Code structure ambiguous input and be transparent about uncertainty:
+
+```markdown
+## Response Quality
+- Perform a 3-level self-review before responding (broad → mid → narrow perspective)
+- If any command or code hasn't been verified, disclose that before presenting it
+- **Structuring**: When the user's message is ambiguous, restate it as a structured summary
+  (bullet points, indentation, markdown) at the top of the response before proceeding
+- **Uncertainty flow** (in order):
+  1. Search `.claude/knowledge/entries/` for relevant active entries
+  2. If not found, offer a clarifying question to the user rather than guessing
+  3. If a question doesn't apply, respond with "No knowledge entry found —
+     the following includes inference/speculation"
+```
 
 ### Knowledge Recording Rules
-
-Add these rules to your project's `CLAUDE.md` to control how Claude Code interacts with the knowledge base:
 
 ```markdown
 ## Knowledge Recording
@@ -156,9 +205,9 @@ Then Read the matching file.
 - Replace `<keyword>` with terms relevant to the current task (service name, technology, etc.)
 ```
 
-### Plan Persistence
+### Plan Persistence (Git-tracked mode)
 
-Add these rules so Claude Code maintains plans across sessions:
+For projects where `.claude/tasks/` is committed to Git:
 
 ```markdown
 ## Plan Persistence
@@ -166,20 +215,82 @@ Add these rules so Claude Code maintains plans across sessions:
 - At session start, check `.claude/tasks/readme.md` for incomplete plans before starting work
 ```
 
-### Workflow Integration
+### <a id="issue-centric-plan-persistence"></a>Plan Persistence (Issue-centric mode)
 
-You can reference both systems from other workflow rules in `CLAUDE.md`. For example:
+For projects using an issue tracker as the primary source of truth:
 
 ```markdown
-## Workflow Rules
-- Start with plan mode for tasks with 3+ steps
-- Add rules to CLAUDE.md when the user points out a recurring mistake
+## Plan Persistence
+- **Primary**: Issue tracker is the single source of truth for plans and progress
+  - Create plan issues using a plan template
+  - Track progress via checklist updates + comments
+- **Secondary**: `.claude/tasks/` is a local working memo (gitignored)
+  - Persists across Claude Code sessions on the same machine
+  - Not shared with other members — anything worth sharing belongs in the issue tracker
+- **Session Start**:
+  1. Check assigned issues in your tracker (e.g., `glab issue list --assignee=@me`)
+  2. Read the target issue's comments to understand the latest state
+```
 
+### Issue Management
+
+For teams using issue-centric mode, add quality checks and stalled issue diagnosis:
+
+```markdown
+## Issue Management
+- Issue quality checks — run when creating, reading, or updating issues:
+  - Granularity: is the scope small enough for one person to complete in a reasonable timeframe?
+  - Priority: does it have a priority label? Is the priority justified?
+  - Risk: are risks and blockers identified?
+- Stalled issue diagnosis: scan on-hold issues for stalled patterns at session start
+- Details can be separated into knowledge entries to keep CLAUDE.md concise
+```
+
+### Progress Update
+
+#### Git-tracked mode
+
+```markdown
 ## Progress Update
 When the user says "update progress", execute all of the following:
 1. Update `.claude/tasks/` todo.md and readme.md
 2. Record any knowledge gained during work
 3. Commit and push changes
+```
+
+#### Issue-centric mode
+
+```markdown
+## Progress Update
+When the user says "update progress", execute all of the following:
+1. Post a progress comment on the issue (latest status, completed items, next actions)
+2. Update issue labels, milestones, and checklists
+3. Update related document execution records and changelogs
+4. Commit and push changes
+5. Record any knowledge gained during work to `.claude/knowledge/entries/`
+```
+
+### Agent Behavior
+
+Delegate non-primary work to subagents to keep the main session context lean:
+
+```markdown
+## Agent Behavior
+- Delegate non-primary work to subagents to keep the main session context lean
+  - Research, multi-file searches, knowledge lookups → Explore subagent
+  - Only pull the summary back into the main context, not raw results
+```
+
+### Language
+
+Separate the language used for config/data files from the language used with users:
+
+```markdown
+## Language
+- Claude Code config/data (CLAUDE.md, `.claude/tasks/`): any language (English recommended)
+- Respond to the user in their preferred language
+- Knowledge entries: user's preferred language
+- Issue tracker: team's common language
 ```
 
 This way, Claude Code naturally manages plans and records discoveries as part of its normal workflow — no manual intervention required.
