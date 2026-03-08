@@ -9,6 +9,11 @@ allowed-tools: Read, Grep, Glob, Edit, Write
 ## Goal
 Capture tacit knowledge discovered during work and make it available for future sessions.
 
+## When to Reference
+- **New session start**: Search `.claude/knowledge/entries/` for active entries related to the current task before starting work
+- **Progress update**: Check if related entries need updating based on new discoveries
+- Not needed when resuming a session (context is already preserved)
+
 ## When to Record
 - Undocumented behavior, quirks, or pitfalls
 - Hardware/service characteristics shared by the user

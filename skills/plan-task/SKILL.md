@@ -10,6 +10,15 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 
 Maintain plans and task progress across Claude Code sessions so that work can be resumed without losing context.
 
+## Session Start (New Sessions Only)
+
+On new session start (not resume), check for incomplete work:
+
+- **Git-tracked mode**: Read `.claude/tasks/readme.md` for incomplete plans
+- **Issue-centric mode**: Check assigned issues (e.g., `gh issue list --assignee=@me`) for open tasks
+
+On progress update, also update the issue tracker (comments, checklists) if applicable.
+
 ## Two Modes
 
 Choose the mode that fits your team's workflow:
