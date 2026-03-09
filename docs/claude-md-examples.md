@@ -23,7 +23,7 @@ Claude Code is not just a coding assistant — it also serves as a "thinking par
 
 ## Response Quality
 
-Help Claude Code structure ambiguous input and be transparent about uncertainty:
+Help Claude Code structure ambiguous input and always ground responses in recorded knowledge:
 
 ```markdown
 ## Response Quality
@@ -31,10 +31,12 @@ Help Claude Code structure ambiguous input and be transparent about uncertainty:
 - If any command or code hasn't been verified, disclose that before presenting it
 - **Structuring**: When the user's message is ambiguous, restate it as a structured summary
   (bullet points, indentation, markdown) at the top of the response before proceeding
-- **Uncertainty flow** (in order):
-  1. Search `.claude/knowledge/entries/` for relevant active entries
-  2. If not found, offer a clarifying question to the user rather than guessing
-  3. If a question doesn't apply, respond with "No knowledge entry found —
+- **Knowledge-first flow** (in order, for EVERY response):
+  1. Search `.claude/knowledge/entries/` for relevant active entries BEFORE any other action
+  2. If found, use the knowledge as the basis for the response
+  3. If not found, proceed to external sources (APIs, file reads, etc.)
+  4. If still uncertain, offer a clarifying question to the user rather than guessing
+  5. If a question doesn't apply, respond with "No knowledge entry found —
      the following includes inference/speculation"
 ```
 
@@ -49,13 +51,19 @@ Help Claude Code structure ambiguous input and be transparent about uncertainty:
 
 ## Knowledge Base Lookup
 
-Add a lookup section so Claude Code searches for relevant entries at the start of each task. You can adjust the strategy based on expected result volume:
+Add a lookup section so Claude Code searches for relevant entries before responding. Knowledge entries are the fastest source of truth — checking them first avoids unnecessary API calls and file reads. Adjust the strategy based on expected result volume:
 
 ```markdown
 ## Knowledge Base Lookup
 
-Before starting work, search for relevant active knowledge entries.
+**Before responding to any user message**, search for relevant active knowledge entries.
+This is the FIRST action — do it before calling external APIs, reading files, or reasoning about the answer.
 Use the Explore subagent for searches that may hit multiple entries (keeps main context clean).
+
+### When to search
+- **Always**: when the user asks about schedules, status, decisions, or project context
+- **Always**: at session start, before beginning any work
+- **Recommended**: when the topic involves a specific service, server, or workflow
 
 ### Search (multiple entries expected)
 
