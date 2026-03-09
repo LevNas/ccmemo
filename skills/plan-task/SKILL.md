@@ -1,6 +1,11 @@
 ---
 name: plan-task
-description: Persist plans and tasks across Claude Code sessions. Use when starting multi-step work, resuming incomplete plans, or updating task progress.
+description: >-
+  Persist multi-step plans and task progress across Claude Code sessions. Use when starting work
+  that may span multiple sessions, resuming incomplete plans, or updating task progress. Supports
+  two modes: Git-tracked (shared via commits) and Issue-centric (issue tracker as primary source
+  of truth, local scratchpad for sessions).
+license: MIT
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -31,6 +36,18 @@ Progress update procedure:
 3. Update issue checklists if applicable
 4. Commit and push if there are pending changes
 
+## Setup
+
+Copy the template files to `.claude/tasks/`:
+
+```bash
+mkdir -p .claude/tasks
+cp assets/tasks-CLAUDE.md .claude/tasks/CLAUDE.md
+cp assets/tasks-readme.md .claude/tasks/readme.md
+```
+
+For **Issue-centric mode**, also add `.claude/tasks/` to `.gitignore`.
+
 ## Two Modes
 
 Choose the mode that fits your team's workflow:
@@ -49,7 +66,7 @@ When an issue tracker is the primary source of truth:
 - `.claude/tasks/` is **gitignored** — add `.claude/tasks/` to `.gitignore`
 - Plans and progress live in the issue tracker; `.claude/tasks/` is a local scratchpad for the current session
 - Anything worth sharing with the team belongs in the issue tracker, not in `.claude/tasks/`
-- At session start, check assigned issues (`glab issue list --assignee=@me` or equivalent) instead of `.claude/tasks/readme.md`
+- At session start, check assigned issues in your tracker instead of `.claude/tasks/readme.md`
 
 The rest of this document describes **Git-tracked mode**. For issue-centric mode, adapt the procedures below: use `.claude/tasks/` as a local memo and post shared artifacts to the issue tracker.
 

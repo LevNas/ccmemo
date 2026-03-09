@@ -1,6 +1,12 @@
 ---
 name: record-knowledge
-description: Record tacit knowledge (quirks, pitfalls, dependencies, decisions) to .claude/knowledge/entries/. Use when discoveries are made during work or at plan completion.
+description: >-
+  Record tacit knowledge — quirks, pitfalls, dependencies, decisions, root causes — as tagged
+  Markdown entries in `.claude/knowledge/entries/`. Use this skill whenever discoveries are made
+  during work, when the user shares undocumented system behavior, or at plan completion to capture
+  lessons learned. Also use when Claude Code makes a mistake pointed out by the user — record what
+  happened, why it was wrong, and what to do next time.
+license: MIT
 allowed-tools: Read, Grep, Glob, Edit, Write
 ---
 
@@ -21,6 +27,17 @@ Capture tacit knowledge discovered during work and make it available for future 
 - Decision rationale (why a particular approach was chosen)
 - Root causes and fixes found during troubleshooting
 - **Claude Code's own mistakes and prevention measures** — errors pointed out by the user, incorrect output, tool misuse, etc. Record specifically: what happened, why it was wrong, and what to do next time. Tag with `#pitfall`
+
+## Setup
+
+Copy `assets/knowledge-CLAUDE.md` to `.claude/knowledge/CLAUDE.md`:
+
+```bash
+mkdir -p .claude/knowledge/entries
+cp assets/knowledge-CLAUDE.md .claude/knowledge/CLAUDE.md
+```
+
+This creates the tag registry and search reference used by the skill.
 
 ## Recording Flow
 
