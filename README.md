@@ -9,6 +9,26 @@ Claude Code starts every session with a blank slate. The quirk you debugged yest
 
 ## Install
 
+### Option 1: Plugin (recommended)
+
+```bash
+# Add the marketplace
+/plugin marketplace add LevNas/claudecode-plugins
+
+# Install ccmemo
+/plugin install ccmemo@levnas-plugins
+```
+
+Then copy the templates into your project:
+
+```bash
+# From your project root
+cp -r path/to/ccmemo/templates/knowledge .claude/knowledge
+cp -r path/to/ccmemo/templates/tasks .claude/tasks
+```
+
+### Option 2: Manual copy
+
 Copy the skills and templates you need into your project:
 
 ```bash
