@@ -121,7 +121,12 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
 1. Extract knowledge from user input or work discoveries
 2. Read the tag registry in `.claude/knowledge/CLAUDE.md`
 3. Select tags — reuse existing tags; check for near-duplicates before creating any new tag
-4. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry)
-5. If a new tag was created, add it to the tag registry
-6. Add see links to related existing entries if applicable
-7. Briefly notify the user what was recorded (no confirmation needed beforehand)
+4. **Find related entries** (see link candidates) — run before writing so links are included from the start:
+   a. **Tag search**: Grep `entries/` for each tag assigned in step 3 (e.g., `Grep pattern="#docker" path=".claude/knowledge/entries/"`)
+   b. **Keyword search**: Grep for 2–3 distinctive terms from the title or body (tool names, error messages, config keys)
+   c. **Narrow results**: Skip `deprecated` entries. From the remaining hits, read titles and tags to judge relevance using the criteria in "see Links (Synapse Formation Between Entries)"
+   d. **Prepare links**: For each related entry, draft a `- see:` line with a brief relationship description
+5. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry) — include the see links drafted in step 4
+6. If a new tag was created, add it to the tag registry
+7. **Add backlinks**: For each entry linked in step 4, edit that entry to add a reciprocal `- see:` link pointing back to the new entry
+8. Briefly notify the user what was recorded and which entries were linked (no confirmation needed beforehand)
