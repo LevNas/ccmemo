@@ -27,6 +27,7 @@ Capture tacit knowledge discovered during work and make it available for future 
 - Decision rationale (why a particular approach was chosen)
 - Root causes and fixes found during troubleshooting
 - **Claude Code's own mistakes and prevention measures** — errors pointed out by the user, incorrect output, tool misuse, etc. Record specifically: what happened, why it was wrong, and what to do next time. Tag with `#pitfall`
+- **Environment-specific behavior** — when a discovery is tied to a specific PC, OS, network, or toolchain version (e.g., proxy issues at office, build differences between WSL and native Linux), include the environment details (hostname, OS, network type, etc.) in the entry body. Tag with `#environment-specific`. This aids retrospective fact-checking when the same user or team works across multiple environments
 
 ## Setup
 

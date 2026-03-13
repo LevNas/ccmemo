@@ -36,6 +36,7 @@ rg '^status: active' .claude/knowledge/entries/
 Add new tags here. Reuse existing tags when possible.
 
 `#pitfall`
+`#environment-specific`
 
 ## Rules
 
