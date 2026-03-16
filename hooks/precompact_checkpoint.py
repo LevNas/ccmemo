@@ -29,6 +29,16 @@ def extract_modified_files(lines: list[str]) -> list[str]:
     return sorted(files)
 
 
+def extract_referenced_knowledge(lines: list[str]) -> list[str]:
+    """Extract knowledge entry paths that were read during the session."""
+    entries = set()
+    pattern = re.compile(r'\.claude/knowledge/entries/[^\s"]+\.md')
+    for line in lines:
+        for match in pattern.finditer(line):
+            entries.add(match.group(0))
+    return sorted(entries)
+
+
 def extract_user_decisions(lines: list[str]) -> list[str]:
     """Extract user messages that look like decisions or plans."""
     decisions = []
@@ -108,9 +118,10 @@ def main() -> None:
     # Extract information
     modified_files = extract_modified_files(tail_lines)
     user_decisions = extract_user_decisions(tail_lines)
+    referenced_knowledge = extract_referenced_knowledge(tail_lines)
 
     # Skip if nothing meaningful to checkpoint
-    if not modified_files and not user_decisions:
+    if not modified_files and not user_decisions and not referenced_knowledge:
         return
 
     # Build checkpoint content
@@ -138,6 +149,12 @@ def main() -> None:
             lines.append(f"- {d}")
         lines.append("")
 
+    if referenced_knowledge:
+        lines.append("## Referenced Knowledge (re-read on resume)")
+        for k in referenced_knowledge:
+            lines.append(f"- {k}")
+        lines.append("")
+
     content = "\n".join(lines)
 
     # Save checkpoint
@@ -152,10 +169,19 @@ def main() -> None:
         return
 
     # Output system message (may be included in compaction summary)
+    knowledge_note = ""
+    if referenced_knowledge:
+        knowledge_note = (
+            " Re-read these knowledge entries: "
+            + ", ".join(referenced_knowledge)
+        )
     result = {
         "systemMessage": (
             f"Context checkpoint saved: {checkpoint_path} "
-            f"({len(modified_files)} files, {len(user_decisions)} decisions)"
+            f"({len(modified_files)} files, {len(user_decisions)} decisions)."
+            f"{knowledge_note}"
+            " Consume checkpoints on next session start: integrate into "
+            "context-*.md and delete."
         )
     }
     print(json.dumps(result, ensure_ascii=False))
