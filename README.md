@@ -225,6 +225,33 @@ Plans can optionally link to issues. Edit `skills/plan-task/SKILL.md` to add pro
 
 You can extend either skill by editing its `SKILL.md` to fit your workflow — for example, adding project-specific tag categories, linking to your issue tracker, or customizing plan templates.
 
+## Context Guard (v1.1.0)
+
+Prevents knowledge loss during context compaction with a two-stage defense:
+
+### How It Works
+
+| Stage | Event | Role | Can Block? |
+|-------|-------|------|------------|
+| 1st | Stop | Prompts `/record-knowledge` when context grows large | YES |
+| 2nd | PreCompact | Saves checkpoint of modified files & decisions | NO (side effect) |
+
+**Stage 1 (Stop hook):** When the transcript exceeds 300KB and no knowledge entry has been recorded recently, Claude pauses and asks if you want to run `/record-knowledge`. Answer "不要" to skip.
+
+**Stage 2 (PreCompact hook):** Before compaction, a checkpoint is automatically saved to `.claude/context-checkpoints/` with modified file paths and user decisions extracted from the transcript tail.
+
+### Configuration
+
+Set the size threshold via environment variable:
+
+```bash
+export CCMEMO_CONTEXT_GUARD_THRESHOLD_KB=500  # default: 300
+```
+
+### Disabling
+
+Remove or comment out the relevant entry in `hooks/hooks.json`, or delete the `hooks/` directory.
+
 ## License
 
 MIT
