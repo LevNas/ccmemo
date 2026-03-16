@@ -110,10 +110,18 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 ## Creating a Plan
 
 1. Create `.claude/tasks/<slug>-<account>-<date>/` following the naming convention
-2. Write `plan-v1.md` with: approach, design decisions, background, completion criteria
-3. Write `todo.md` with a checkbox task list
-4. Write `readme.md` with the plan's purpose and current state
-5. Add an entry to `.claude/tasks/readme.md`
+2. **Search related knowledge**: Grep `.claude/knowledge/entries/` for tags and keywords related to the plan's topic. Look for:
+   - Past pitfalls (`#pitfall`) that may recur
+   - Design decisions and their rationale
+   - Related tooling or configuration knowledge
+3. Write `plan-v1.md` with: approach, design decisions, background, completion criteria. If related knowledge was found in step 2, include a **Related Knowledge** section:
+   ```markdown
+   ## Related Knowledge
+   - [entry title](../../knowledge/entries/slug.md) — why it's relevant
+   ```
+4. Write `todo.md` with a checkbox task list
+5. Write `readme.md` with the plan's purpose and current state
+6. Add an entry to `.claude/tasks/readme.md`
 
 ## Working on Tasks
 
@@ -155,3 +163,12 @@ If the plan is linked to an issue in your project's issue tracker:
 - Mark all tasks in `todo.md` as done
 - Update `<slug>/readme.md` state to "completed"
 - Move the entry in `.claude/tasks/readme.md` from the active table to the completed table
+- **Knowledge extraction**: Review the completed work and extract lessons learned:
+  1. Scan `todo.md` for blockers, workarounds, and unexpected discoveries noted during execution
+  2. Compare the plan (what was expected) with the actual outcome (what happened)
+  3. For each piece of tacit knowledge found, invoke `record-knowledge` to create an entry
+  4. If related knowledge entries were referenced in the plan, update them with new findings
+- **Retrospective prompt**: Notify the user with a brief summary:
+  - What was completed
+  - What knowledge was extracted
+  - Ask: "Are there lessons from this work not yet captured?"
