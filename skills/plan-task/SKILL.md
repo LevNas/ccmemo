@@ -122,6 +122,7 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 4. Write `todo.md` with a checkbox task list
 5. Write `readme.md` with the plan's purpose and current state
 6. Add an entry to `.claude/tasks/readme.md`
+7. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
 
 ## Working on Tasks
 
@@ -146,6 +147,7 @@ If the plan is linked to an issue in your project's issue tracker:
 - Reset `todo.md` to match the new plan (carry over incomplete items)
 - Update `<slug>/readme.md` with which version is current and why the revision was needed
 - Claude Code reads only the latest `plan-vN.md` and `todo.md`
+- **Issue sync**: If linked to an issue, update the issue body to reflect the revised plan
 
 ## Committing Progress
 
@@ -164,6 +166,7 @@ If the plan is linked to an issue in your project's issue tracker:
 - Mark all tasks in `todo.md` as done
 - Update `<slug>/readme.md` state to "completed"
 - Move the entry in `.claude/tasks/readme.md` from the active table to the completed table
+- **Issue sync**: If linked to an issue, update the issue with completion status and final summary
 - **Knowledge extraction**: Review the completed work and extract lessons learned:
   1. Scan `todo.md` for blockers, workarounds, and unexpected discoveries noted during execution
   2. Compare the plan (what was expected) with the actual outcome (what happened)
