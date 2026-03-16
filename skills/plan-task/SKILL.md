@@ -119,10 +119,11 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
    ## Related Knowledge
    - [entry title](../../knowledge/entries/slug.md) — why it's relevant
    ```
-4. Write `todo.md` with a checkbox task list
-5. Write `readme.md` with the plan's purpose and current state
-6. Add an entry to `.claude/tasks/readme.md`
-7. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
+4. **Capture detailed context**: If the plan involves context that is too detailed for `plan-v1.md` (e.g., investigation results, API behavior, configuration specifics, design trade-off analysis), invoke `record-knowledge` to create knowledge entries and link them from the plan via `see:` links. Plans summarize *what* and *why*; knowledge entries preserve the *details* that future sessions need to pick up the work
+5. Write `todo.md` with a checkbox task list
+6. Write `readme.md` with the plan's purpose and current state
+7. Add an entry to `.claude/tasks/readme.md`
+8. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
 
 ## Working on Tasks
 
@@ -130,6 +131,7 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 - Mark task status: `- [ ]` (pending) → `- [~]` (in progress) → `- [x]` (done)
 - Record discovered issues or blockers indented below the relevant task
 - Add new task lines to `todo.md` as work expands
+- **Capture context as knowledge**: When detailed findings emerge during work (investigation results, root causes, configuration specifics, behavioral quirks), invoke `record-knowledge` to preserve them as knowledge entries rather than burying them in `todo.md` notes. This ensures the details survive context compaction and are discoverable in future sessions
 - **Issue sync**: When updating `todo.md` or `readme.md`, also update the linked issue (if any) with the same progress. This is not optional — if an issue link exists, keep it in sync
 
 ### Issue Tracker Sync
