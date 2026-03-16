@@ -131,4 +131,3 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
 6. If a new tag was created, add it to the tag registry
 7. **Add backlinks**: For each entry linked in step 4, edit that entry to add a reciprocal `- see:` link pointing back to the new entry
 8. Briefly notify the user what was recorded and which entries were linked (no confirmation needed beforehand)
-9. **Update active tasks**: Check `.claude/tasks/readme.md` for active plans. If the recorded knowledge relates to an active task, update `todo.md` progress markers and `readme.md` status accordingly. Skip if no active tasks exist or if the knowledge is unrelated to any active task

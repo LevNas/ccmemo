@@ -129,15 +129,16 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 - Mark task status: `- [ ]` (pending) → `- [~]` (in progress) → `- [x]` (done)
 - Record discovered issues or blockers indented below the relevant task
 - Add new task lines to `todo.md` as work expands
+- **Issue sync**: When updating `todo.md` or `readme.md`, also update the linked issue (if any) with the same progress. This is not optional — if an issue link exists, keep it in sync
 
-### Issue Tracker Sync (Optional)
+### Issue Tracker Sync
 
 If the plan is linked to an issue in your project's issue tracker:
 
 - Check the issue for updates before starting work on `.claude/tasks/`
 - Reflect any direction changes or new comments into `.claude/tasks/`
 - Include the issue reference in commit messages
-- Post progress comments to the issue when milestones are reached
+- Update the issue body or post a progress comment when task status changes
 
 ## Revising a Plan
 
