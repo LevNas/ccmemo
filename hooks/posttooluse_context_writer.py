@@ -156,6 +156,25 @@ def main() -> None:
     except OSError:
         return
 
+    # Notify user via systemMessage
+    file_path = tool_input.get("file_path", "")
+    result = {
+        "systemMessage": (
+            f"[context] {file_path} の変更を {context_path} に記録"
+        )
+    }
+    print(json.dumps(result))
+
+    # Hint if user is directly writing to knowledge entries
+    if "/.claude/knowledge/entries/" in file_path:
+        hint = {
+            "systemMessage": (
+                "[hint] /record-knowledge スキル経由だと"
+                "seeリンク・タグレジストリが自動管理されます"
+            )
+        }
+        print(json.dumps(hint))
+
 
 if __name__ == "__main__":
     main()
