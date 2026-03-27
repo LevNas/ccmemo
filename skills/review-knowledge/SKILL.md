@@ -71,6 +71,11 @@ Scan the entire knowledge base and report:
 - Resolve relative paths from the entry's location
 - Report: list of entries with broken ref links
 
+#### i. Missing Overview
+- For each tag used by 5+ active entries, check if an `overview` type entry exists for that topic
+- An overview entry is identified by `type: overview` in frontmatter
+- Report: list of tags with entry count but no overview, suggesting overview creation
+
 ### 2. Topic Review (`topic:<keyword or tag>`)
 Deep dive into a specific topic:
 
@@ -94,6 +99,7 @@ Interactively fix issues found in the health check:
    - **Unidirectional links**: Add the missing reverse `- see:` link to the target entry so both entries link to each other
    - **Broken see links**: Search `entries/` for the target filename — if found at a different path (e.g., migrated to YYYY/MM/), auto-fix the link. If not found, report for manual review
    - **Broken file references**: Report for manual review (target may need to be created or the ref removed)
+   - **Missing overviews**: Generate an overview entry template for the user to review — do NOT auto-create, ask for confirmation first
    - **Unregistered tags**: Auto-add missing tags to the registry in `.claude/knowledge/CLAUDE.md` under the appropriate section
    - **Unused tags**: Report for manual review (do not auto-delete)
 3. Report actions taken
@@ -111,6 +117,7 @@ Interactively fix issues found in the health check:
 - Unidirectional links: N
 - Broken see links: N
 - Broken file references: N
+- Missing overviews: N
 - Tag issues: N
 
 ## Stale Entries
@@ -143,10 +150,17 @@ Interactively fix issues found in the health check:
 |-------|------------|
 | [title](YYYY/MM/slug.md) | `../../../path/to/missing` |
 
+## Missing Overviews
+| Tag | Entry Count | Suggestion |
+|-----|-------------|------------|
+| #tag1 | N | Consider creating an overview entry |
+
 ## Tag Issues
 - Unregistered: #tag1, #tag2
 - Unused: #tag3
 - Near-duplicates: #foo / #foos
+
+**Tip**: Run `scripts/regenerate-tag-registry.py --write` to rebuild the tag registry from entries.
 ```
 
 ## Procedure
