@@ -61,6 +61,16 @@ Scan the entire knowledge base and report:
 - These represent broken bidirectional links that reduce discoverability from the target entry's side
 - Report: list of unidirectional pairs with source entry, target entry, and direction of missing link
 
+#### g. Broken See Links
+- For each `- see:` link in entries, verify that the target file exists under `entries/`
+- Resolve entries/-relative paths (e.g., `2026/03/slug.md`) and legacy filename-only paths (`slug.md`)
+- Report: list of entries with broken see links, including the missing target path
+
+#### h. Broken File References
+- For each `- ref:` link pointing to a local file path (not external URLs), verify the target exists
+- Resolve relative paths from the entry's location
+- Report: list of entries with broken ref links
+
 ### 2. Topic Review (`topic:<keyword or tag>`)
 Deep dive into a specific topic:
 
@@ -82,6 +92,8 @@ Interactively fix issues found in the health check:
    - **Orphan entries**: Search for related entries and add see links (using the same search procedure as record-knowledge step 4)
    - **Missing connections**: Add see links between suggested pairs (with user-facing notification)
    - **Unidirectional links**: Add the missing reverse `- see:` link to the target entry so both entries link to each other
+   - **Broken see links**: Search `entries/` for the target filename — if found at a different path (e.g., migrated to YYYY/MM/), auto-fix the link. If not found, report for manual review
+   - **Broken file references**: Report for manual review (target may need to be created or the ref removed)
    - **Unregistered tags**: Auto-add missing tags to the registry in `.claude/knowledge/CLAUDE.md` under the appropriate section
    - **Unused tags**: Report for manual review (do not auto-delete)
 3. Report actions taken
@@ -97,6 +109,8 @@ Interactively fix issues found in the health check:
 - Stale entries (>90 days): N
 - Missing connections: N suggested
 - Unidirectional links: N
+- Broken see links: N
+- Broken file references: N
 - Tag issues: N
 
 ## Stale Entries
@@ -118,6 +132,16 @@ Interactively fix issues found in the health check:
 | Source | Target | Missing Direction |
 |--------|--------|-------------------|
 | [title](slug.md) | [title](slug.md) | target → source |
+
+## Broken See Links
+| Entry | Broken Target |
+|-------|---------------|
+| [title](YYYY/MM/slug.md) | `YYYY/MM/missing.md` |
+
+## Broken File References
+| Entry | Broken Ref |
+|-------|------------|
+| [title](YYYY/MM/slug.md) | `../../../path/to/missing` |
 
 ## Tag Issues
 - Unregistered: #tag1, #tag2
