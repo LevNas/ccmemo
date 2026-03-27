@@ -42,8 +42,17 @@ Add new tags here. Reuse existing tags when possible.
 `#pitfall`
 `#environment-specific`
 
-## Entry Types
+## Entry Lifecycle
 
+### Status
+| Status | Meaning |
+|--------|---------|
+| `draft` | Unverified fragment — do not use as basis for decisions |
+| `active` | Verified, current knowledge (default if omitted) |
+| `superseded` | Replaced by newer entry — follow `superseded_by` link |
+| `deprecated` | Obsolete, no longer relevant |
+
+### Type
 | Type | Meaning |
 |------|---------|
 | `knowledge` | Standalone verified fact (default if omitted) |
@@ -51,6 +60,11 @@ Add new tags here. Reuse existing tags when possible.
 | `detail` | Focused entry referenced from an overview |
 | `fragment` | Isolated observation, not yet promoted |
 | `synthesis` | Cross-cutting insight from multiple entries |
+
+### Confidence
+- `low` — observed once, unverified
+- `mid` — partially verified
+- `high` — well-established fact
 
 ## Rules
 

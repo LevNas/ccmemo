@@ -77,7 +77,17 @@ Scan the entire knowledge base and report:
 - Entries exceeding **300 lines**: report as suggestion (may benefit from splitting)
 - Report: list of oversized entries with size, line count, and tags
 
-#### j. Missing Overview
+#### j. Synthesis Candidates
+- Active entries sharing 2+ tags with 3+ entries in the cluster, and no `synthesis` entry exists for that tag combination
+- `fragment` entries older than 60 days that have accumulated 2+ `see:` links (hub-forming signal)
+- Report with prompt: "These entries may be ready for synthesis. Create one?"
+
+#### k. Superseded Chain Check
+- Entries with `status: superseded` must have a valid `superseded_by` path
+- Check that the replacement entry exists and is `active`
+- Report broken superseded chains
+
+#### l. Missing Overview
 - For each tag used by 5+ active entries, check if an `overview` type entry exists for that topic
 - An overview entry is identified by `type: overview` in frontmatter
 - Report: list of tags with entry count but no overview, suggesting overview creation
@@ -106,6 +116,8 @@ Interactively fix issues found in the health check:
    - **Broken see links**: Search `entries/` for the target filename — if found at a different path (e.g., migrated to YYYY/MM/), auto-fix the link. If not found, report for manual review
    - **Broken file references**: Report for manual review (target may need to be created or the ref removed)
    - **Oversized entries**: Propose splitting using the split procedure from `record-knowledge` — ask for confirmation before splitting
+   - **Synthesis candidates**: Draft a synthesis entry template from the candidate entries — ask for user review before creating
+   - **Broken superseded chains**: Report for manual review (the replacement entry may need to be created or the superseded_by path corrected)
    - **Missing overviews**: Generate an overview entry template for the user to review — do NOT auto-create, ask for confirmation first
    - **Unregistered tags**: Auto-add missing tags to the registry in `.claude/knowledge/CLAUDE.md` under the appropriate section
    - **Unused tags**: Report for manual review (do not auto-delete)
@@ -125,6 +137,8 @@ Interactively fix issues found in the health check:
 - Broken see links: N
 - Broken file references: N
 - Oversized entries: N
+- Synthesis candidates: N
+- Broken superseded chains: N
 - Missing overviews: N
 - Tag issues: N
 
@@ -163,6 +177,16 @@ Interactively fix issues found in the health check:
 |-------|------|-------|------|----------|
 | [title](YYYY/MM/slug.md) | 1.2 MB | 542 | #tag1 | action required |
 | [title](YYYY/MM/slug.md) | 600 KB | 380 | #tag2 | warning |
+
+## Synthesis Candidates
+| Tag Cluster | Entries | Suggestion |
+|-------------|---------|------------|
+| #tag1 #tag2 | entry-a, entry-b, entry-c | Ready for synthesis |
+
+## Broken Superseded Chains
+| Entry | superseded_by | Issue |
+|-------|---------------|-------|
+| [title](YYYY/MM/slug.md) | `YYYY/MM/missing.md` | Replacement not found |
 
 ## Missing Overviews
 | Tag | Entry Count | Suggestion |

@@ -63,8 +63,10 @@ This creates the tag registry and search reference used by the skill.
 title: <title>
 author: "@<username>"
 created: YYYY-MM-DD
-status: active | deprecated
+status: draft | active | superseded | deprecated
 type: knowledge | overview | detail | fragment | synthesis
+confidence: low | mid | high
+superseded_by: YYYY/MM/newer-entry-slug.md   # only when status: superseded
 tags: "#tag1 #tag2 ..."
 ---
 
@@ -148,8 +150,73 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
 
 | Status | Meaning | Claude Code Behavior |
 |--------|---------|---------------------|
-| `active` | Current, valid knowledge | Use as basis for decisions |
-| `deprecated` | Obsolete or proven incorrect | Do not reference; use only for historical context |
+| `draft` | Unverified fragment | Reference with caution. Do not use as basis for decisions |
+| `active` | Verified, current knowledge | Use as basis for decisions |
+| `superseded` | Replaced by a newer entry | Do not reference; follow `superseded_by` link to the replacement |
+| `deprecated` | Obsolete, no longer relevant | Do not reference; use only for historical context |
+
+### Confidence Levels
+
+| Level | Meaning | When to Use |
+|-------|---------|-------------|
+| `low` | Anecdotal or unverified | Observed once, not yet reproduced or confirmed |
+| `mid` | Partially verified | Reproduced or confirmed in some contexts |
+| `high` | Well-established fact | Verified multiple times, documented, or widely known |
+
+- `confidence` is optional — omit if not applicable
+- `draft` entries typically have `confidence: low`
+- Promote `confidence` as knowledge is verified through use
+
+### Correction Flow (superseded)
+
+When an entry is found to be incorrect:
+1. Set `status: superseded` and add `superseded_by: YYYY/MM/newer-entry-slug.md`
+2. Create the replacement entry with a `- see:` link: `corrects [original title](YYYY/MM/original.md)`
+3. Keep the original entry intact — it preserves why the incorrect belief was held, useful for retrospective learning
+4. Do NOT delete or overwrite the original content
+
+## Entry Granularity
+
+**1 entry = 1 topic.** A topic is the smallest unit of knowledge that is useful on its own.
+
+Splitting guidelines:
+- 1 pitfall → 1 entry
+- 1 design decision + rationale → 1 entry
+- 1 root cause + fix → 1 entry
+- Background shared by multiple entries → `type: fragment` or a referenced `synthesis` entry
+
+When recording from a large context (e.g., session output):
+1. Identify distinct topics within the context
+2. Create 1 entry per topic
+3. Link related entries with `- see:`
+
+### Synthesis Entries
+
+A `synthesis` entry distills patterns and principles from multiple related entries. It represents the author's internalized understanding, not just recorded facts.
+
+```markdown
+---
+title: "My approach to NixOS system configuration"
+type: synthesis
+status: active
+confidence: high
+tags: "#nixos #system-config"
+sources:
+  - YYYY/MM/entry-a.md
+  - YYYY/MM/entry-b.md
+  - YYYY/MM/entry-c.md
+---
+
+Distilled understanding from experience.
+Not just facts — the author's own perspective and principles.
+
+- see: [entry-a](YYYY/MM/entry-a.md) — source
+- see: [entry-b](YYYY/MM/entry-b.md) — source
+```
+
+- `sources:` lists the entries that were synthesized (entries/-relative paths)
+- Synthesis entries do NOT replace source entries — sources remain `active`
+- On session start, prefer `synthesis` over individual `knowledge` entries for the same topic (reduces context consumption)
 
 ## Amendment Rules
 - Entries are **mutable** — edit in place (git tracks change history)
@@ -157,6 +224,7 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
   - Use `git log entries/<slug>.md` to review change history
 - Use `deprecated` only when knowledge is genuinely obsolete
   - Example: service decommissioned, fundamental spec change, "should no longer be referenced"
+- Use `superseded` when an entry is replaced by a corrected version (see Correction Flow above)
 
 ## Splitting Large Entries
 
