@@ -127,7 +127,7 @@ Interactively fix issues found in the health check:
 
 ## Procedure
 
-1. Glob `.claude/knowledge/entries/*.md` to list all entries
+1. Glob `.claude/knowledge/entries/**/*.md` to list all entries (recursively, including YYYY/MM/ subdirectories)
 2. Read each entry's YAML frontmatter (title, status, created, tags) and scan for `- see:` lines
 3. Read `.claude/knowledge/CLAUDE.md` for the tag registry
 4. Analyze and generate the report based on the selected mode

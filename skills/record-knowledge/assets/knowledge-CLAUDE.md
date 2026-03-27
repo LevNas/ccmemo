@@ -9,10 +9,14 @@ One entry per file with YAML frontmatter.
 .claude/knowledge/
 ├── CLAUDE.md          # This index
 └── entries/           # One entry per file (YAML frontmatter)
-    ├── YYYYMMDD-HHMMSS-author-slug.md   # New format
-    ├── <slug>.md                         # Legacy (no rename needed)
-    └── ...
+    └── YYYY/
+        └── MM/
+            └── YYYYMMDD-HHMMSS-author-slug.md
 ```
+
+- Entries are organized by year/month subdirectories
+- `rg` and `fd` recurse into subdirectories automatically — search commands remain unchanged
+- Legacy flat entries (directly under `entries/`) remain functional
 
 ## Search
 
@@ -41,7 +45,7 @@ Add new tags here. Reuse existing tags when possible.
 
 - Entries are mutable — edit in place, rely on git for history
 - Use `deprecated` only when knowledge is genuinely obsolete
-- New entries use `YYYYMMDD-HHMMSS-author-slug.md` naming (timestamp + author for collision avoidance)
+- New entries use `YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` naming (year/month subdirectory + timestamp + author for collision avoidance)
 - Do NOT add links to subdirectory CLAUDE.md files — use tag search to find entries
 - Existing entries without timestamp prefix remain as-is (no rename)
 - See `/record-knowledge` skill for full details
