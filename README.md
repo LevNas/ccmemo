@@ -6,6 +6,7 @@ Claude Code starts every session with a blank slate. The quirk you debugged yest
 
 - **Knowledge Base** (`/record-knowledge`): Captures tacit knowledge — quirks, pitfalls, decisions — as tagged Markdown entries in `.claude/knowledge/entries/`
 - **Plan & Task Persistence** (`/plan-task`): Maintains multi-step plans and task progress across sessions in `.claude/tasks/`
+- **Knowledge Review** (`/review-knowledge`): Maintains knowledge base health — finds stale entries, orphan entries, missing connections, and tag issues. Supports periodic review and internalization of accumulated knowledge
 
 ## Install
 
@@ -51,7 +52,9 @@ your-project/
     ├── skills/
     │   ├── record-knowledge/
     │   │   └── SKILL.md
-    │   └── plan-task/
+    │   ├── plan-task/
+    │   │   └── SKILL.md
+    │   └── review-knowledge/
     │       └── SKILL.md
     ├── knowledge/
     │   ├── CLAUDE.md
@@ -106,6 +109,20 @@ rg '^title:' .claude/knowledge/entries/
 rg '^status: active' .claude/knowledge/entries/
 ```
 
+### Reviewing Knowledge
+
+Periodically run `/review-knowledge` to maintain knowledge base health:
+
+```
+/review-knowledge
+```
+
+Three modes are available:
+
+- **Health Check** (default): Scans the entire knowledge base and reports stale entries (>90 days), orphan entries (no `see:` links), missing connections (shared tags but no links), tag issues (unregistered/unused/near-duplicate), and summary statistics
+- **Topic Review** (`topic:<keyword>`): Deep dive into a specific topic — summarizes related entries and asks reflective questions to help you verify accuracy
+- **Fix Mode** (`fix`): Interactively fixes issues found in the health check — adds missing `see:` links, registers unregistered tags, and reports actions taken
+
 ### Plan & Task Management
 
 Claude Code uses `/plan-task` to persist multi-step plans across sessions. Two modes are available:
@@ -121,6 +138,8 @@ Claude Code uses `/plan-task` to persist multi-step plans across sessions. Two m
 5. **Complete**: Mark done in both the plan directory and the task index
 
 If your project uses an issue tracker, plans can optionally link to issues for bidirectional progress tracking.
+
+Each task directory also contains **context-\*.md** files that capture detailed working context (investigation results, trial & error, decision rationale) too granular for plan files but essential for resuming work. These are written incrementally — both automatically by the PostToolUse hook (file changes) and manually for reasoning and analysis. See [Context Guard](#context-guard-v110) for details.
 
 #### Issue-centric mode
 
@@ -227,22 +246,36 @@ You can extend either skill by editing its `SKILL.md` to fit your workflow — f
 
 ## Context Guard (v1.1.0)
 
-Prevents knowledge loss during context compaction with a two-stage defense:
+Prevents knowledge loss during context compaction with a three-stage defense:
 
 ### How It Works
 
 | Stage | Event | Role | Can Block? |
 |-------|-------|------|------------|
-| 1st | Stop | Prompts `/record-knowledge` when context grows large | YES |
-| 2nd | PreCompact | Saves checkpoint of modified files & decisions | NO (side effect) |
+| 1st | PostToolUse | Appends file changes to active task's `context-*.md` | NO (side effect) |
+| 2nd | Stop | Prompts `/record-knowledge` when context grows large | YES |
+| 3rd | PreCompact | Saves checkpoint of modified files & decisions | NO (side effect) |
 
-**Stage 1 (Stop hook):** When the transcript exceeds 300KB and no knowledge entry has been recorded recently, Claude pauses and asks if you want to run `/record-knowledge`. Answer "不要" to skip.
+**Stage 1 (PostToolUse hook):** Every time Write or Edit tools modify a file, the change is automatically appended to the active task's `context-*.md` file. This provides incremental context capture that survives context compaction. Only fires when an active task exists in `.claude/tasks/readme.md`.
 
-**Stage 2 (PreCompact hook):** Before compaction, a checkpoint is automatically saved to `.claude/context-checkpoints/` with modified file paths and user decisions extracted from the transcript tail.
+**Stage 2 (Stop hook):** When the transcript exceeds 300KB and no knowledge entry has been recorded recently, Claude pauses and asks if you want to run `/record-knowledge`. Answer "不要" to skip.
+
+**Stage 3 (PreCompact hook):** Before compaction, a checkpoint is automatically saved to `.claude/context-checkpoints/` with modified file paths and user decisions extracted from the transcript tail.
+
+### Checkpoint Lifecycle
+
+Checkpoints saved by the PreCompact hook are consumed by `/plan-task` on the next session start or after compaction:
+
+1. Read each checkpoint file in `.claude/context-checkpoints/`
+2. Integrate modified file lists and user decisions into the active task's `context-*.md`
+3. If a checkpoint contains knowledge-worthy findings, invoke `/record-knowledge`
+4. Delete consumed checkpoint files
+
+The `.claude/context-checkpoints/` directory is created on-demand when the first compaction occurs — it does not exist until then.
 
 ### Configuration
 
-Set the size threshold via environment variable:
+Set the size threshold for the Stop hook via environment variable:
 
 ```bash
 export CCMEMO_CONTEXT_GUARD_THRESHOLD_KB=500  # default: 300

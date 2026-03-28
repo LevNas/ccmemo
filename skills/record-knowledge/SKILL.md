@@ -42,18 +42,19 @@ This creates the tag registry and search reference used by the skill.
 
 ## Recording Flow
 
-1. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` with YAML frontmatter
+1. Create `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` with YAML frontmatter
 2. For new discoveries without enough detail yet, write a temporary note in the working directory and convert to an entry later
 3. Do NOT add links to subdirectory `CLAUDE.md` files — use tag search to find entries instead
 4. Claude Code acts autonomously — create and edit entries without asking for user confirmation
 
 ## Entry Location
-- `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` — one file per entry
+- `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` — one file per entry, organized by year/month
 - Timestamp prefix ensures chronological ordering and collision avoidance
 - Author field uses your Git hosting platform account name (without `@`)
 - Slug is descriptive kebab-case
-- Example: `20260302-143052-alice-docker-compose-port-conflict.md`
-- Existing entries without timestamp prefix remain as-is (no rename required)
+- Example: `2026/03/20260302-143052-alice-docker-compose-port-conflict.md`
+- Create `YYYY/MM/` subdirectory if it doesn't exist
+- Legacy flat entries (directly under `entries/`) remain functional — migrate with `scripts/migrate-to-dated-dirs.py`
 
 ## Entry Format (YAML Frontmatter)
 ```markdown
@@ -94,7 +95,7 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
 
 ### see Links (Synapse Formation Between Entries)
 - Add `see:` links to related entries when creating or editing an entry
-- Within `entries/`, use filename only: `- see: [title](slug.md) — relationship`
+- Within `entries/`, use entries/-relative paths: `- see: [title](YYYY/MM/slug.md) — relationship`
 - Describe the relationship briefly after `—` (e.g., "another port conflict", "prerequisite step")
 - Relevance criteria:
   - **Sequential steps**: procedure step dependencies, workflow stages
@@ -127,7 +128,7 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
    b. **Keyword search**: Grep for 2–3 distinctive terms from the title or body (tool names, error messages, config keys)
    c. **Narrow results**: Skip `deprecated` entries. From the remaining hits, read titles and tags to judge relevance using the criteria in "see Links (Synapse Formation Between Entries)"
    d. **Prepare links**: For each related entry, draft a `- see:` line with a brief relationship description
-5. Create `.claude/knowledge/entries/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry) — include the see links drafted in step 4
+5. Create `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry) — include the see links drafted in step 4
 6. If a new tag was created, add it to the tag registry
 7. **Add backlinks**: For each entry linked in step 4, edit that entry to add a reciprocal `- see:` link pointing back to the new entry
 8. Briefly notify the user what was recorded and which entries were linked (no confirmation needed beforehand)

@@ -15,14 +15,19 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 
 Maintain plans and task progress across Claude Code sessions so that work can be resumed without losing context.
 
-## Session Start (New Sessions Only)
+## Session Start / Post-Compaction / Session Resume
 
-On new session start (not resume), check for incomplete work:
+On new session start, after context compaction, or on session resume, perform the following:
 
-- **Git-tracked mode**: Read `.claude/tasks/readme.md` for incomplete plans
-- **Issue-centric mode**: Check assigned issues (e.g., `gh issue list --assignee=@me`) for open tasks
-
-On progress update, also update the issue tracker (comments, checklists) if applicable.
+1. **Consume checkpoints**: Check `.claude/context-checkpoints/` for any checkpoint files
+   - Read each checkpoint file
+   - Integrate modified file lists and user decisions into the active task's `context-*.md`
+   - If a checkpoint contains knowledge-worthy findings, invoke `record-knowledge`
+   - Delete consumed checkpoint files
+2. **Check incomplete work**:
+   - **Git-tracked mode**: Read `.claude/tasks/readme.md` for active plans, then read the active task's latest `context-*.md` to restore detailed context
+   - **Issue-centric mode**: Check assigned issues (e.g., `gh issue list --assignee=@me`) for open tasks
+3. On progress update, also update the issue tracker (comments, checklists) if applicable.
 
 ## Progress Update Triggers
 
@@ -100,12 +105,47 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 .claude/tasks/
 ├── readme.md                  # Index of all plans (status and summary)
 ├── <slug>-<account>-<date>/
-│   ├── readme.md              # Purpose, current state, file listing
+│   ├── readme.md              # Handoff notes: current state, next actions, blockers
 │   ├── plan-v1.md             # Initial plan (approach, design decisions, context)
 │   ├── plan-v2.md             # Revised plan (v1 remains unchanged)
 │   ├── todo.md                # Current task progress (frequently updated)
+│   ├── context-*.md           # Session context: investigation details, trial & error, decisions
 │   └── ...
 ```
+
+### context-*.md (Session Context Files)
+
+Captures detailed working context that is too granular for plan-vN.md but essential for resuming work after compaction or across sessions. Each file represents a focused context segment.
+
+**Naming**: `context-YYYYMMDD-HHMMSS-topic.md`
+
+**Format**:
+```markdown
+---
+created: YYYY-MM-DD HH:MM:SS
+status: active | consumed
+tags: "#tag1 #tag2"
+---
+
+## HH:MM - <summary>
+
+<details — investigation findings, configuration tried, error messages, decision rationale>
+```
+
+**Lifecycle**:
+- **active**: Being written to during the current session
+- **consumed**: Content has been integrated into knowledge entries or a new plan revision; kept for reference but not actively read on session start
+
+**Source of truth hierarchy**:
+
+| Information | Source of truth | Mirrors |
+|-------------|----------------|---------|
+| Plan approach & rationale | plan-vN.md | issue body |
+| Task progress | todo.md | issue checklists |
+| Detailed working context | context-*.md | (not mirrored) |
+| Team-shared knowledge | knowledge entries | (not mirrored) |
+| Team visibility & progress | issue | (authoritative) |
+| Session handoff | readme.md | (not mirrored) |
 
 ## Creating a Plan
 
@@ -119,9 +159,11 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
    ## Related Knowledge
    - [entry title](../../knowledge/entries/slug.md) — why it's relevant
    ```
-4. Write `todo.md` with a checkbox task list
-5. Write `readme.md` with the plan's purpose and current state
-6. Add an entry to `.claude/tasks/readme.md`
+4. **Capture detailed context**: If the plan involves context too detailed for `plan-v1.md` (investigation results, API behavior, configuration specifics, design trade-off analysis), create `context-YYYYMMDD-HHMMSS-topic.md` in the task directory. Plans summarize *what* and *why*; context files preserve the *details* that future sessions need to resume work. Only invoke `record-knowledge` for findings that are universally valuable to the team beyond this specific task
+5. Write `todo.md` with a checkbox task list
+6. Write `readme.md` with the plan's purpose and current state
+7. Add an entry to `.claude/tasks/readme.md`
+8. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
 
 ## Working on Tasks
 
@@ -129,15 +171,18 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 - Mark task status: `- [ ]` (pending) → `- [~]` (in progress) → `- [x]` (done)
 - Record discovered issues or blockers indented below the relevant task
 - Add new task lines to `todo.md` as work expands
+- **Capture context incrementally**: When detailed findings emerge during work (investigation results, root causes, configuration specifics, trial & error), write them to `context-*.md` in the task directory. This is automated by the PostToolUse hook for file changes, but also write manually for reasoning, decisions, and analysis that don't correspond to file edits. This ensures details survive context compaction
+- **Promote to knowledge selectively**: Only invoke `record-knowledge` for findings that are universally valuable beyond this specific task (team-shared pitfalls, reusable patterns, tool quirks). Task-specific details stay in `context-*.md`
+- **Issue sync**: When updating `todo.md` or `readme.md`, also update the linked issue (if any) with the same progress. This is not optional — if an issue link exists, keep it in sync
 
-### Issue Tracker Sync (Optional)
+### Issue Tracker Sync
 
 If the plan is linked to an issue in your project's issue tracker:
 
 - Check the issue for updates before starting work on `.claude/tasks/`
 - Reflect any direction changes or new comments into `.claude/tasks/`
 - Include the issue reference in commit messages
-- Post progress comments to the issue when milestones are reached
+- Update the issue body or post a progress comment when task status changes
 
 ## Revising a Plan
 
@@ -145,6 +190,7 @@ If the plan is linked to an issue in your project's issue tracker:
 - Reset `todo.md` to match the new plan (carry over incomplete items)
 - Update `<slug>/readme.md` with which version is current and why the revision was needed
 - Claude Code reads only the latest `plan-vN.md` and `todo.md`
+- **Issue sync**: If linked to an issue, update the issue body to reflect the revised plan
 
 ## Committing Progress
 
@@ -155,20 +201,24 @@ If the plan is linked to an issue in your project's issue tracker:
 
 ### On session end or interruption
 
-- Update `<slug>/readme.md` with current state and handoff notes
-- Next session starts by checking `.claude/tasks/readme.md` for incomplete plans
+- Update `<slug>/readme.md` with handoff notes: current state, next actions, any blockers
+- Mark completed context files as `status: consumed` if their content has been fully integrated
+- Next session starts by checking `.claude/tasks/readme.md` for incomplete plans and reading active `context-*.md` files
 
 ### On plan completion
 
 - Mark all tasks in `todo.md` as done
 - Update `<slug>/readme.md` state to "completed"
 - Move the entry in `.claude/tasks/readme.md` from the active table to the completed table
-- **Knowledge extraction**: Review the completed work and extract lessons learned:
-  1. Scan `todo.md` for blockers, workarounds, and unexpected discoveries noted during execution
-  2. Compare the plan (what was expected) with the actual outcome (what happened)
-  3. For each piece of tacit knowledge found, invoke `record-knowledge` to create an entry
-  4. If related knowledge entries were referenced in the plan, update them with new findings
+- **Issue sync**: If linked to an issue, update the issue with completion status and final summary
+- **Knowledge extraction (retrospective)**: Review the completed work and extract lessons learned:
+  1. Scan `context-*.md` files and `todo.md` for blockers, workarounds, and unexpected discoveries
+  2. Check for overlap with existing knowledge entries to avoid duplication — Grep `.claude/knowledge/entries/` for key terms from the findings
+  3. Compare the plan (what was expected) with the actual outcome (what happened)
+  4. For each piece of **team-valuable** tacit knowledge found (not task-specific details), invoke `record-knowledge` to create an entry
+  5. If related knowledge entries were referenced in the plan, update them with new findings
+  6. Mark all context files as `status: consumed`
 - **Retrospective prompt**: Notify the user with a brief summary:
   - What was completed
-  - What knowledge was extracted
+  - What knowledge was promoted from context to entries
   - Ask: "Are there lessons from this work not yet captured?"
