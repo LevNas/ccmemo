@@ -74,7 +74,8 @@ tags: "#tag1 #tag2 ..."
 - see: [related entry title](YYYY/MM/slug.md) — relationship description
 ```
 
-- Entry body has no size constraint — include command examples, error messages, config values, decision context as needed
+- Keep entries focused and under **100 KB** where possible. If approaching **1 MB**, split into multiple focused entries (one pitfall, one decision, one root cause per entry). Large entries degrade context loading precision in future sessions
+- When creating an entry that exceeds **300 lines**, consider splitting it immediately using the split procedure below
 - `type` is optional — defaults to `knowledge` if omitted
 
 ### Entry Types
@@ -156,6 +157,34 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
   - Use `git log entries/<slug>.md` to review change history
 - Use `deprecated` only when knowledge is genuinely obsolete
   - Example: service decommissioned, fundamental spec change, "should no longer be referenced"
+
+## Splitting Large Entries
+
+When an entry exceeds 300 lines or approaches 100 KB, split it into an **index + sub-entries** structure:
+
+### Split Structure
+```
+entries/YYYY/MM/
+├── YYYYMMDD-HHMMSS-author-topic.md          ← Index (type: overview)
+└── YYYYMMDD-HHMMSS-author-topic/
+    ├── section-one.md                        ← Sub-entry (type: detail)
+    ├── section-two.md                        ← Sub-entry (type: detail)
+    └── section-three.md                      ← Sub-entry (type: detail)
+```
+
+### Split Procedure
+1. Create a subdirectory next to the original entry with the same base name (without `.md`)
+2. Move each major section (`## heading`) into its own file in the subdirectory
+3. Convert the original entry into an index (`type: overview`) with:
+   - Brief summary of the topic
+   - `## Detail Entries` section with see links to each sub-entry
+4. Each sub-entry gets its own frontmatter (`type: detail`, same tags as parent)
+5. Sub-entries use simple filenames (no timestamp prefix needed — the parent directory provides context)
+
+### When to Split
+- Entry exceeds **300 lines** during creation → split immediately
+- Existing entry grows past **300 lines** through edits → propose split
+- `review-knowledge` reports an entry as oversized → split in fix mode
 
 ## Procedure
 1. Extract knowledge from user input or work discoveries
