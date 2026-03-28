@@ -41,6 +41,16 @@ Add new tags here. Reuse existing tags when possible.
 
 `#pitfall`
 
+## Entry Types
+
+| Type | Meaning |
+|------|---------|
+| `knowledge` | Standalone verified fact (default if omitted) |
+| `overview` | Topic entry point — summary + detail links |
+| `detail` | Focused entry referenced from an overview |
+| `fragment` | Isolated observation, not yet promoted |
+| `synthesis` | Cross-cutting insight from multiple entries |
+
 ## Rules
 
 - Entries are mutable — edit in place, rely on git for history
@@ -48,4 +58,5 @@ Add new tags here. Reuse existing tags when possible.
 - New entries use `YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` naming (year/month subdirectory + timestamp + author for collision avoidance)
 - Do NOT add links to subdirectory CLAUDE.md files — use tag search to find entries
 - Existing entries without timestamp prefix remain as-is (no rename)
+- New tags **must** be added to the Tag Registry within the same operation
 - See `/record-knowledge` skill for full details

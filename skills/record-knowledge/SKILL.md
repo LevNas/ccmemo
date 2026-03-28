@@ -17,6 +17,7 @@ Capture tacit knowledge discovered during work and make it available for future 
 
 ## When to Reference
 - **New session start**: Search `.claude/knowledge/entries/` for active entries related to the current task before starting work
+  - If an `overview` entry exists for the topic, read it first — load `detail` entries on demand to save context
 - **Progress update**: Check if related entries need updating based on new discoveries
 - Not needed when resuming a session (context is already preserved)
 
@@ -63,16 +64,53 @@ title: <title>
 author: "@<username>"
 created: YYYY-MM-DD
 status: active | deprecated
+type: knowledge | overview | detail | fragment | synthesis
 tags: "#tag1 #tag2 ..."
 ---
 
 <body — concrete facts, procedures, code examples, etc.>
 
 - ref: [display text](URL or relative path)
-- see: [related entry title](related-entry-slug.md) — relationship description
+- see: [related entry title](YYYY/MM/slug.md) — relationship description
 ```
 
 - Entry body has no size constraint — include command examples, error messages, config values, decision context as needed
+- `type` is optional — defaults to `knowledge` if omitted
+
+### Entry Types
+
+| Type | Meaning | When to Use |
+|------|---------|-------------|
+| `knowledge` | Standalone verified fact (default) | Most entries — independent pieces of knowledge |
+| `overview` | Topic entry point with summary and detail links | When 3+ detail entries exist for a topic |
+| `detail` | Focused entry referenced from an overview | Deep-dive into a specific aspect of a topic |
+| `fragment` | Isolated observation, not yet promoted | Quick notes that may become knowledge later |
+| `synthesis` | Cross-cutting insight from multiple entries | Integrating patterns across entries (#27) |
+
+### Overview Entries
+
+Overview entries serve as **topic entry points** that reduce context consumption:
+
+- Add `topic: <topic-name>` to frontmatter (lowercase kebab-case)
+- Include a `## Detail Entries` section listing related detail entries via see links
+- On session start, read the overview first; load detail entries on demand
+- Consider creating an overview when 3+ entries share the same primary tag
+
+```markdown
+---
+title: "Docker — Overview"
+type: overview
+topic: docker
+status: active
+tags: "#docker"
+---
+
+Summary of Docker-related knowledge.
+
+## Detail Entries
+- see: [Port conflict resolution](YYYY/MM/slug.md) — common port conflicts
+- see: [Build cache pitfalls](YYYY/MM/slug.md) — cache invalidation issues
+```
 
 ### Tag Guidelines
 - Claude Code assigns tags autonomously for optimal searchability
@@ -129,6 +167,6 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
    c. **Narrow results**: Skip `deprecated` entries. From the remaining hits, read titles and tags to judge relevance using the criteria in "see Links (Synapse Formation Between Entries)"
    d. **Prepare links**: For each related entry, draft a `- see:` line with a brief relationship description
 5. Create `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry) — include the see links drafted in step 4
-6. If a new tag was created, add it to the tag registry
+6. **Tag registry update (mandatory)**: If a new tag was created, add it to the tag registry in `.claude/knowledge/CLAUDE.md` **within the same operation** — do not defer this step. Use `scripts/regenerate-tag-registry.py --write` for bulk maintenance
 7. **Add backlinks**: For each entry linked in step 4, edit that entry to add a reciprocal `- see:` link pointing back to the new entry
 8. Briefly notify the user what was recorded and which entries were linked (no confirmation needed beforehand)
