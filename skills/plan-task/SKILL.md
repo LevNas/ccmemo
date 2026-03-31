@@ -6,7 +6,7 @@ description: >-
   two modes: Git-tracked (shared via commits) and Issue-centric (issue tracker as primary source
   of truth, local scratchpad for sessions).
 license: MIT
-allowed-tools: Read, Grep, Glob, Edit, Write, Bash
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash, TaskCreate, TaskUpdate, TaskList
 ---
 
 # Plan & Task Persistence
@@ -19,15 +19,21 @@ Maintain plans and task progress across Claude Code sessions so that work can be
 
 On new session start, after context compaction, or on session resume, perform the following:
 
-1. **Consume checkpoints**: Check `.claude/context-checkpoints/` for any checkpoint files
+1. **Quick state recovery** (fastest path):
+   - Run `TaskList` to check for in-progress tasks registered via TaskCreate/TaskUpdate
+   - If tasks exist, their descriptions contain the task directory path — proceed to step 3
+2. **Consume checkpoints**: Check `.claude/context-checkpoints/` for any checkpoint files
    - Read each checkpoint file
    - Integrate modified file lists and user decisions into the active task's `context-*.md`
    - If a checkpoint contains knowledge-worthy findings, invoke `record-knowledge`
    - Delete consumed checkpoint files
-2. **Check incomplete work**:
-   - **Git-tracked mode**: Read `.claude/tasks/readme.md` for active plans, then read the active task's latest `context-*.md` to restore detailed context
+3. **Restore context** (progressive depth — stop when you have enough context to continue):
+   a. Read `<task-dir>/session_state.md` — contains current state, next action, and blockers in minimal form
+   b. Read `<task-dir>/todo.md` — full task checklist
+   c. Read active `context-*.md` files only if deeper context is needed (investigation details, error messages, etc.)
+   - **Git-tracked mode**: Find task dir from `.claude/tasks/readme.md`
    - **Issue-centric mode**: Check assigned issues (e.g., `gh issue list --assignee=@me`) for open tasks
-3. On progress update, also update the issue tracker (comments, checklists) if applicable.
+4. On progress update, also update the issue tracker (comments, checklists) if applicable.
 
 ## Progress Update Triggers
 
@@ -109,6 +115,7 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 │   ├── plan-v1.md             # Initial plan (approach, design decisions, context)
 │   ├── plan-v2.md             # Revised plan (v1 remains unchanged)
 │   ├── todo.md                # Current task progress (frequently updated)
+│   ├── session_state.md        # Lightweight checkpoint: current state, next action, blockers
 │   ├── context-*.md           # Session context: investigation details, trial & error, decisions
 │   └── ...
 ```
@@ -136,12 +143,41 @@ tags: "#tag1 #tag2"
 - **active**: Being written to during the current session
 - **consumed**: Content has been integrated into knowledge entries or a new plan revision; kept for reference but not actively read on session start
 
+### session_state.md (Lightweight Checkpoint)
+
+A minimal file that enables fast session recovery without reading full context files. Updated on session end/interruption and optionally by the PreCompact hook.
+
+**Format**:
+```markdown
+---
+updated: YYYY-MM-DD HH:MM:SS
+task_dir: <slug>-<account>-<date>
+---
+
+## Current State
+- Plan: <plan name and version>
+- Progress: N/M tasks completed
+- Current task: <what is being worked on>
+- Next action: <concrete next step>
+- Blockers: <any blockers, or "none">
+
+## Key Decisions This Session
+- <decision 1>
+- <decision 2>
+```
+
+**Rules**:
+- Keep under 20 lines — this is a pointer, not a log
+- Overwrite on each update (not append)
+- `next action` should be specific enough to resume work without reading other files
+
 **Source of truth hierarchy**:
 
 | Information | Source of truth | Mirrors |
 |-------------|----------------|---------|
 | Plan approach & rationale | plan-vN.md | issue body |
-| Task progress | todo.md | issue checklists |
+| Task progress | todo.md | TaskCreate/TaskUpdate, issue checklists |
+| Session resume state | session_state.md | (not mirrored) |
 | Detailed working context | context-*.md | (not mirrored) |
 | Team-shared knowledge | knowledge entries | (not mirrored) |
 | Team visibility & progress | issue | (authoritative) |
@@ -166,14 +202,17 @@ tags: "#tag1 #tag2"
    ```
 5. **Capture detailed context**: If the plan involves context too detailed for `plan-v1.md` (investigation results, API behavior, configuration specifics, design trade-off analysis), create `context-YYYYMMDD-HHMMSS-topic.md` in the task directory. Plans summarize *what* and *why*; context files preserve the *details* that future sessions need to resume work. Only invoke `record-knowledge` for findings that are universally valuable to the team beyond this specific task
 6. Write `todo.md` with a checkbox task list
-7. Write `readme.md` with the plan's purpose and current state
-8. Add an entry to `.claude/tasks/readme.md`
-9. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
+7. **Register tasks with TaskCreate**: For each top-level task in `todo.md`, call `TaskCreate` with a description that includes the task directory path (e.g., `[plan-task-improve-i39] Implement TaskCreate/TaskUpdate sync`). This enables quick recovery after context compaction via `TaskList`
+8. Write `session_state.md` with initial state (see format below)
+9. Write `readme.md` with the plan's purpose and current state
+10. Add an entry to `.claude/tasks/readme.md`
+11. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
 
 ## Working on Tasks
 
 - Update `todo.md` only — do not modify plan files
 - Mark task status: `- [ ]` (pending) → `- [~]` (in progress) → `- [x]` (done)
+- **Sync with TaskUpdate**: When changing task status in `todo.md`, also call `TaskUpdate` with the corresponding status (`in_progress` or `completed`). For new tasks added during work, call `TaskCreate`
 - Record discovered issues or blockers indented below the relevant task
 - Add new task lines to `todo.md` as work expands
 - **Capture context incrementally**: When detailed findings emerge during work (investigation results, root causes, configuration specifics, trial & error), write them to `context-*.md` in the task directory. This is automated by the PostToolUse hook for file changes, but also write manually for reasoning, decisions, and analysis that don't correspond to file edits. This ensures details survive context compaction
@@ -206,9 +245,10 @@ If the plan is linked to an issue in your project's issue tracker:
 
 ### On session end or interruption
 
+- **Update `<slug>/session_state.md`** with current state (see format below) — this is the first file read on resume
 - Update `<slug>/readme.md` with handoff notes: current state, next actions, any blockers
 - Mark completed context files as `status: consumed` if their content has been fully integrated
-- Next session starts by checking `.claude/tasks/readme.md` for incomplete plans and reading active `context-*.md` files
+- Next session starts by running `TaskList` and reading `session_state.md` for quick recovery
 
 ### On plan completion
 

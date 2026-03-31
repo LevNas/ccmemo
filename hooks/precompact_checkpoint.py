@@ -6,6 +6,8 @@ and user decisions from the transcript tail before compaction
 discards tool output.
 
 Saves checkpoints to .claude/context-checkpoints/.
+Also updates session_state.md in the active task directory for fast
+session recovery.
 """
 
 import json
@@ -93,6 +95,110 @@ def extract_user_decisions(lines: list[str]) -> list[str]:
     return unique[:10]
 
 
+def find_active_task_dir(cwd: str) -> str | None:
+    """Find the first active task directory from .claude/tasks/readme.md."""
+    readme_path = os.path.join(cwd, ".claude", "tasks", "readme.md")
+    if not os.path.isfile(readme_path):
+        return None
+
+    try:
+        with open(readme_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        return None
+
+    in_active = False
+    for line in content.splitlines():
+        if line.strip().startswith("## Active"):
+            in_active = True
+            continue
+        if line.strip().startswith("## Completed"):
+            in_active = False
+            continue
+        if not in_active:
+            continue
+
+        match = re.search(r"`([^`]+/)`", line)
+        if match:
+            dir_name = match.group(1)
+            task_dir = os.path.join(cwd, ".claude", "tasks", dir_name)
+            if os.path.isdir(task_dir):
+                return task_dir
+
+    return None
+
+
+def read_todo_progress(task_dir: str) -> str:
+    """Read todo.md and return a progress summary."""
+    todo_path = os.path.join(task_dir, "todo.md")
+    if not os.path.isfile(todo_path):
+        return "unknown"
+
+    try:
+        with open(todo_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        return "unknown"
+
+    done = content.count("- [x]")
+    in_progress = content.count("- [~]")
+    pending = content.count("- [ ]")
+    total = done + in_progress + pending
+    if total == 0:
+        return "no tasks"
+
+    current = ""
+    for line in content.splitlines():
+        if "- [~]" in line:
+            current = line.strip().lstrip("- [~]").strip()
+            break
+
+    progress = f"{done}/{total} completed"
+    if current:
+        progress += f", current: {current}"
+    return progress
+
+
+def update_session_state(
+    task_dir: str,
+    user_decisions: list[str],
+    modified_files: list[str],
+) -> None:
+    """Update session_state.md in the active task directory."""
+    now = datetime.now()
+    dir_name = os.path.basename(task_dir.rstrip("/"))
+    progress = read_todo_progress(task_dir)
+
+    lines = [
+        "---",
+        f"updated: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"task_dir: {dir_name}",
+        "---",
+        "",
+        "## Current State",
+        f"- Progress: {progress}",
+    ]
+
+    if modified_files:
+        recent = modified_files[-3:]  # last 3 files
+        lines.append(f"- Recent files: {', '.join(os.path.basename(f) for f in recent)}")
+
+    lines.append("")
+
+    if user_decisions:
+        lines.append("## Key Decisions This Session")
+        for d in user_decisions[:5]:
+            lines.append(f"- {d}")
+        lines.append("")
+
+    state_path = os.path.join(task_dir, "session_state.md")
+    try:
+        with open(state_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+    except OSError:
+        pass
+
+
 def main() -> None:
     try:
         input_data = json.load(sys.stdin)
@@ -168,6 +274,11 @@ def main() -> None:
     except OSError:
         return
 
+    # Update session_state.md in active task directory
+    task_dir = find_active_task_dir(cwd)
+    if task_dir:
+        update_session_state(task_dir, user_decisions, modified_files)
+
     # Output system message (may be included in compaction summary)
     knowledge_note = ""
     if referenced_knowledge:
@@ -175,13 +286,15 @@ def main() -> None:
             " Re-read these knowledge entries: "
             + ", ".join(referenced_knowledge)
         )
+    state_note = ""
+    if task_dir:
+        state_note = f" Session state updated: {task_dir}/session_state.md."
     result = {
         "systemMessage": (
             f"Context checkpoint saved: {checkpoint_path} "
             f"({len(modified_files)} files, {len(user_decisions)} decisions)."
-            f"{knowledge_note}"
-            " Consume checkpoints on next session start: integrate into "
-            "context-*.md and delete."
+            f"{knowledge_note}{state_note}"
+            " On resume: run TaskList, then read session_state.md for quick recovery."
         )
     }
     print(json.dumps(result, ensure_ascii=False))
