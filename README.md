@@ -244,6 +244,36 @@ Plans can optionally link to issues. Edit `skills/plan-task/SKILL.md` to add pro
 
 You can extend either skill by editing its `SKILL.md` to fit your workflow — for example, adding project-specific tag categories, linking to your issue tracker, or customizing plan templates.
 
+## Subagent Delegation (v1.8.0)
+
+Both `record-knowledge` and `plan-task` skills delegate their execution to a Sonnet subagent. This keeps the main conversation context lean while the subagent handles file I/O and knowledge graph maintenance.
+
+### Structured Input Template
+
+The main agent prepares four structured fields before delegating:
+
+| Field | Purpose |
+|-------|---------|
+| `what` | Factual observation or decision |
+| `why` | Reasoning behind recording it |
+| `context` | Related issues, branches, files |
+| `tags_hint` | Recommended tags (validated by subagent) |
+
+This separation ensures consistent entry quality regardless of how the main agent phrases its instructions.
+
+### Plan-Task Operation Modes
+
+`plan-task` uses an explicit operation mode to guide the subagent:
+
+| Mode | When |
+|------|------|
+| `session-start` | New session, post-compaction, resume |
+| `create-plan` | Starting a new multi-step plan |
+| `update-progress` | Progress update or break signal |
+| `revise-plan` | Plan approach needs to change |
+| `pause` | Taking a break, session end |
+| `complete` | All tasks done, wrap up |
+
 ## Context Guard (v1.1.0)
 
 Prevents knowledge loss during context compaction with a three-stage defense:
