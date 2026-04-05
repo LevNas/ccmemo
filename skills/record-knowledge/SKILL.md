@@ -25,7 +25,7 @@ Capture tacit knowledge discovered during work and make it available for future 
 
 Delegate the recording work to a Sonnet subagent to minimize main context consumption.
 
-1. Identify what knowledge to record from the user input or work context
+1. Analyze the user input or work context and prepare structured input fields
 2. Determine the knowledge base path (default: `.claude/knowledge/entries/`)
 3. Spawn a subagent with the following configuration:
 
@@ -37,12 +37,18 @@ Agent(
   prompt: |
     You are a knowledge recording agent. Read the procedure file and follow it precisely.
 
-    ## Task
-    Record the following knowledge:
-    {knowledge_description}
+    ## Input
+    ### what（事実）
+    {what}
 
-    ## Arguments
-    {arguments_from_user}
+    ### why（判断理由）
+    {why}
+
+    ### context（背景情報）
+    {context}
+
+    ### tags_hint（推奨タグ）
+    {tags_hint}
 
     ## Instructions
     1. Read the procedure file at: {plugin_root}/skills/record-knowledge/procedure.md
@@ -52,7 +58,13 @@ Agent(
 )
 ```
 
-Replace `{knowledge_description}` with a clear summary of what to record, `{arguments_from_user}` with the ARGUMENTS passed to the skill, and `{plugin_root}` with the plugin's installation path (shown in the skill loading message as "Base directory for this skill"), and `{project_root}` with the project working directory.
+Replace the placeholders:
+- `{what}` — 何が起きたか: the factual observation, discovery, or decision to record
+- `{why}` — なぜ重要か: why this matters, the reasoning behind recording it (judgment made by the main agent)
+- `{context}` — 関連する背景情報: surrounding context (task being worked on, environment, related files, issues)
+- `{tags_hint}` — 推奨タグ: tags the main agent recommends (subagent validates against the tag registry)
+- `{plugin_root}` — the plugin's installation path (shown in the skill loading message as "Base directory for this skill")
+- `{project_root}` — the project working directory
 
 4. Report the subagent's result to the user (filename, headings, linked entries only)
 

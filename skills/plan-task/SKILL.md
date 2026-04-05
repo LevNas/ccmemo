@@ -6,7 +6,7 @@ description: >-
   two modes: Git-tracked (shared via commits) and Issue-centric (issue tracker as primary source
   of truth, local scratchpad for sessions).
 license: MIT
-allowed-tools: Read, Grep, Glob, Edit, Write, Bash, TaskCreate, TaskUpdate, TaskList
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Agent
 ---
 
 # Plan & Task Persistence
@@ -15,255 +15,69 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash, TaskCreate, TaskUpdate, Task
 
 Maintain plans and task progress across Claude Code sessions so that work can be resumed without losing context.
 
-## Session Start / Post-Compaction / Session Resume
+## Execution
 
-On new session start, after context compaction, or on session resume, perform the following:
+Delegate the plan/task work to a Sonnet subagent to minimize main context consumption.
 
-1. **Quick state recovery** (fastest path):
-   - Run `TaskList` to check for in-progress tasks registered via TaskCreate/TaskUpdate
-   - If tasks exist, their descriptions contain the task directory path — proceed to step 3
-2. **Consume checkpoints**: Check `.claude/context-checkpoints/` for any checkpoint files
-   - Read each checkpoint file
-   - Integrate modified file lists and user decisions into the active task's `context-*.md`
-   - If a checkpoint contains knowledge-worthy findings, invoke `record-knowledge`
-   - Delete consumed checkpoint files
-3. **Restore context** (progressive depth — stop when you have enough context to continue):
-   a. Read `<task-dir>/session_state.md` — contains current state, next action, and blockers in minimal form
-   b. Read `<task-dir>/todo.md` — full task checklist
-   c. Read active `context-*.md` files only if deeper context is needed (investigation details, error messages, etc.)
-   - **Git-tracked mode**: Find task dir from `.claude/tasks/readme.md`
-   - **Issue-centric mode**: Check assigned issues (e.g., `gh issue list --assignee=@me`) for open tasks
-4. On progress update, also update the issue tracker (comments, checklists) if applicable.
-
-## Progress Update Triggers
-
-- **Explicit**: User says "progress update" or equivalent → execute immediately
-- **Implicit**: User signals a break or completion (e.g., "thanks", "taking a break", "that's it for today") → suggest "Shall I update progress?" before proceeding
-- **Milestone**: A significant chunk of work is completed → suggest "Shall I update progress?"
-
-Progress update procedure:
-1. Check related issues (`gh issue list`)
-2. Post a progress comment (completed work, next steps, related work)
-3. Update issue checklists if applicable
-4. Commit and push if there are pending changes
-
-## Setup
-
-Copy the template files to `.claude/tasks/`:
-
-```bash
-mkdir -p .claude/tasks
-cp assets/tasks-CLAUDE.md .claude/tasks/CLAUDE.md
-cp assets/tasks-readme.md .claude/tasks/readme.md
-```
-
-For **Issue-centric mode**, also add `.claude/tasks/` to `.gitignore`.
-
-## Two Modes
-
-Choose the mode that fits your team's workflow:
-
-| | Git-tracked mode | Issue-centric mode |
-|---|---|---|
-| Primary source of truth | `.claude/tasks/` (committed to Git) | Issue tracker (GitLab, GitHub, Jira, etc.) |
-| `.claude/tasks/` role | Shared plan/task storage | Local working memo (gitignored) |
-| Team visibility | Via Git commits | Via issue tracker |
-| Best for | Small teams, single-repo projects | Teams already using an issue tracker |
-
-### Issue-centric mode
-
-When an issue tracker is the primary source of truth:
-
-- `.claude/tasks/` is **gitignored** — add `.claude/tasks/` to `.gitignore`
-- Plans and progress live in the issue tracker; `.claude/tasks/` is a local scratchpad for the current session
-- Anything worth sharing with the team belongs in the issue tracker, not in `.claude/tasks/`
-- At session start, check assigned issues in your tracker instead of `.claude/tasks/readme.md`
-
-The rest of this document describes **Git-tracked mode**. For issue-centric mode, adapt the procedures below: use `.claude/tasks/` as a local memo and post shared artifacts to the issue tracker.
-
----
-
-## Git-tracked mode
-
-## When to Use
-
-- Starting a multi-step task that may span multiple sessions
-- Resuming work — check `.claude/tasks/readme.md` for incomplete plans
-- Updating progress on an existing plan
-- Closing out or archiving a completed plan
-
-## Directory Naming
+1. Determine the operation mode from user input or session context
+2. Prepare structured input fields for the subagent
+3. Spawn a subagent with the following configuration:
 
 ```
-.claude/tasks/<slug>-<account>-<date>/           # Without issue reference
-.claude/tasks/<slug>-i<issue>-<account>-<date>/  # With issue reference
+Agent(
+  subagent_type: "general-purpose",
+  model: "sonnet",
+  description: "plan and task management",
+  prompt: |
+    You are a plan and task management agent. Read the procedure file and follow it precisely.
+
+    ## Operation
+    {mode}
+
+    ## Input
+    ### what（事実）
+    {what}
+
+    ### why（判断理由）
+    {why}
+
+    ### context（背景情報）
+    {context}
+
+    ### tags_hint（推奨タグ）
+    {tags_hint}
+
+    ## Instructions
+    1. Read the procedure file at: {plugin_root}/skills/plan-task/procedure.md
+    2. Execute the procedure section matching the operation mode: {mode}
+    3. The project root is: {project_root}
+    4. The tasks directory is: {project_root}/.claude/tasks/
+    5. For setup, asset files are at: {plugin_root}/skills/plan-task/assets/
+    6. Return: operation performed, files created/modified, current plan status, and knowledge candidates (if any)
+)
 ```
 
-- Separate components with `-` (hyphen)
-- Separate words within slug with `_` (underscore)
-- Slug uses lowercase alphanumeric only; date is YYYYMMDD
-- Example: `docker_migration-alice-20260304/`
-- Example: `auth_refactor-i42-bob-20260304/`
+Replace the placeholders:
+- `{mode}` — one of: session-start, create-plan, update-progress, revise-plan, pause, complete
+- `{what}` — the factual situation (e.g., "user wants to create a plan for Docker migration" or "three tasks completed, one blocker found")
+- `{why}` — why this operation is needed now (e.g., "new session started, need to check for incomplete work")
+- `{context}` — relevant background (current branch, related issues, recently modified files, active plan slug if known)
+- `{tags_hint}` — recommended tags for any knowledge entries that may be created (especially relevant for `complete` mode)
+- `{plugin_root}` — the plugin's installation path (shown in the skill loading message as "Base directory for this skill")
+- `{project_root}` — the project working directory
 
-## Directory Structure
+4. Report the subagent's result to the user (operation performed, files modified, current status)
+5. If the subagent returns knowledge candidates (typically from `complete` mode), invoke `record-knowledge` for each candidate using the structured fields provided
 
-```
-.claude/tasks/
-├── readme.md                  # Index of all plans (status and summary)
-├── <slug>-<account>-<date>/
-│   ├── readme.md              # Handoff notes: current state, next actions, blockers
-│   ├── plan-v1.md             # Initial plan (approach, design decisions, context)
-│   ├── plan-v2.md             # Revised plan (v1 remains unchanged)
-│   ├── todo.md                # Current task progress (frequently updated)
-│   ├── session_state.md        # Lightweight checkpoint: current state, next action, blockers
-│   ├── context-*.md           # Session context: investigation details, trial & error, decisions
-│   └── ...
-```
+IMPORTANT: The procedure file path uses the plugin's base directory, NOT the project directory. Read the "Base directory for this skill" line from the skill loading message to determine the correct path.
 
-### context-*.md (Session Context Files)
+### Mode Selection Guide
 
-Captures detailed working context that is too granular for plan-vN.md but essential for resuming work after compaction or across sessions. Each file represents a focused context segment.
-
-**Naming**: `context-YYYYMMDD-HHMMSS-topic.md`
-
-**Format**:
-```markdown
----
-created: YYYY-MM-DD HH:MM:SS
-status: active | consumed
-tags: "#tag1 #tag2"
----
-
-## HH:MM - <summary>
-
-<details — investigation findings, configuration tried, error messages, decision rationale>
-```
-
-**Lifecycle**:
-- **active**: Being written to during the current session
-- **consumed**: Content has been integrated into knowledge entries or a new plan revision; kept for reference but not actively read on session start
-
-### session_state.md (Lightweight Checkpoint)
-
-A minimal file that enables fast session recovery without reading full context files. Updated on session end/interruption and optionally by the PreCompact hook.
-
-**Format**:
-```markdown
----
-updated: YYYY-MM-DD HH:MM:SS
-task_dir: <slug>-<account>-<date>
----
-
-## Current State
-- Plan: <plan name and version>
-- Progress: N/M tasks completed
-- Current task: <what is being worked on>
-- Next action: <concrete next step>
-- Blockers: <any blockers, or "none">
-
-## Key Decisions This Session
-- <decision 1>
-- <decision 2>
-```
-
-**Rules**:
-- Keep under 20 lines — this is a pointer, not a log
-- Overwrite on each update (not append)
-- `next action` should be specific enough to resume work without reading other files
-
-**Source of truth hierarchy**:
-
-| Information | Source of truth | Mirrors |
-|-------------|----------------|---------|
-| Plan approach & rationale | plan-vN.md | issue body |
-| Task progress | todo.md | TaskCreate/TaskUpdate, issue checklists |
-| Session resume state | session_state.md | (not mirrored) |
-| Detailed working context | context-*.md | (not mirrored) |
-| Team-shared knowledge | knowledge entries | (not mirrored) |
-| Team visibility & progress | issue | (authoritative) |
-| Session handoff | readme.md | (not mirrored) |
-
-## Creating a Plan
-
-1. Create `.claude/tasks/<slug>-<account>-<date>/` following the naming convention
-2. **Issue link check** (strongly recommended):
-   a. Search for related issues: `gh issue list -S "<keywords>"` (includes open issues)
-   b. Search closed issues too: `gh issue list -S "<keywords>" --state closed` to avoid creating duplicate work
-   c. If a related issue exists, use the `-i<issue>` naming convention (e.g., `auth_refactor-i42-bob-20260304/`)
-   d. If no issue exists, consider creating one for team visibility before proceeding
-3. **Search related knowledge**: Grep `.claude/knowledge/entries/` for tags and keywords related to the plan's topic. Look for:
-   - Past pitfalls (`#pitfall`) that may recur
-   - Design decisions and their rationale
-   - Related tooling or configuration knowledge
-4. Write `plan-v1.md` with: approach, design decisions, background, completion criteria. If related knowledge was found in step 3, include a **Related Knowledge** section:
-   ```markdown
-   ## Related Knowledge
-   - [entry title](../../knowledge/entries/YYYY/MM/slug.md) — why it's relevant
-   ```
-5. **Capture detailed context**: If the plan involves context too detailed for `plan-v1.md` (investigation results, API behavior, configuration specifics, design trade-off analysis), create `context-YYYYMMDD-HHMMSS-topic.md` in the task directory. Plans summarize *what* and *why*; context files preserve the *details* that future sessions need to resume work. Only invoke `record-knowledge` for findings that are universally valuable to the team beyond this specific task
-6. Write `todo.md` with a checkbox task list
-7. **Register tasks with TaskCreate**: For each top-level task in `todo.md`, call `TaskCreate` with a description that includes the task directory path (e.g., `[plan-task-improve-i39] Implement TaskCreate/TaskUpdate sync`). This enables quick recovery after context compaction via `TaskList`
-8. Write `session_state.md` with initial state (see format below)
-9. Write `readme.md` with the plan's purpose and current state
-10. Add an entry to `.claude/tasks/readme.md`
-11. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
-
-## Working on Tasks
-
-- Update `todo.md` only — do not modify plan files
-- Mark task status: `- [ ]` (pending) → `- [~]` (in progress) → `- [x]` (done)
-- **Sync with TaskUpdate**: When changing task status in `todo.md`, also call `TaskUpdate` with the corresponding status (`in_progress` or `completed`). For new tasks added during work, call `TaskCreate`
-- Record discovered issues or blockers indented below the relevant task
-- Add new task lines to `todo.md` as work expands
-- **Capture context incrementally**: When detailed findings emerge during work (investigation results, root causes, configuration specifics, trial & error), write them to `context-*.md` in the task directory. This is automated by the PostToolUse hook for file changes, but also write manually for reasoning, decisions, and analysis that don't correspond to file edits. This ensures details survive context compaction
-- **Promote to knowledge selectively**: Only invoke `record-knowledge` for findings that are universally valuable beyond this specific task (team-shared pitfalls, reusable patterns, tool quirks). Task-specific details stay in `context-*.md`
-- **Issue sync**: When updating `todo.md` or `readme.md`, also update the linked issue (if any) with the same progress. This is not optional — if an issue link exists, keep it in sync
-
-### Issue Tracker Sync
-
-If the plan is linked to an issue in your project's issue tracker:
-
-- Check the issue for updates before starting work on `.claude/tasks/`
-- Reflect any direction changes or new comments into `.claude/tasks/`
-- Include the issue reference in commit messages
-- Update the issue body or post a progress comment when task status changes
-
-## Revising a Plan
-
-- Do NOT edit existing `plan-vN.md` files — create `plan-vN+1.md` instead
-- Reset `todo.md` to match the new plan (carry over incomplete items)
-- Update `<slug>/readme.md` with which version is current and why the revision was needed
-- Claude Code reads only the latest `plan-vN.md` and `todo.md`
-- **Issue sync**: If linked to an issue, update the issue body to reflect the revised plan
-
-## Committing Progress
-
-- Commit when task progress changes (completion, blockers found, etc.)
-- If linked to an issue, report progress there as well
-
-## Pausing or Completing Work
-
-### On session end or interruption
-
-- **Update `<slug>/session_state.md`** with current state (see format below) — this is the first file read on resume
-- Update `<slug>/readme.md` with handoff notes: current state, next actions, any blockers
-- Mark completed context files as `status: consumed` if their content has been fully integrated
-- Next session starts by running `TaskList` and reading `session_state.md` for quick recovery
-
-### On plan completion
-
-- Mark all tasks in `todo.md` as done
-- Update `<slug>/readme.md` state to "completed"
-- Move the entry in `.claude/tasks/readme.md` from the active table to the completed table
-- **Issue sync**: If linked to an issue, update the issue with completion status and final summary
-- **Knowledge extraction (retrospective)**: Review the completed work and extract lessons learned:
-  1. Scan `context-*.md` files and `todo.md` for blockers, workarounds, and unexpected discoveries
-  2. Check for overlap with existing knowledge entries to avoid duplication — Grep `.claude/knowledge/entries/` for key terms from the findings
-  3. Compare the plan (what was expected) with the actual outcome (what happened)
-  4. For each piece of **team-valuable** tacit knowledge found (not task-specific details), invoke `record-knowledge` to create an entry
-  5. If related knowledge entries were referenced in the plan, update them with new findings
-  6. Mark all context files as `status: consumed`
-- **Retrospective prompt**: Notify the user with a brief summary:
-  - What was completed
-  - What knowledge was promoted from context to entries
-  - Ask: "Are there lessons from this work not yet captured?"
+| User signal | Mode |
+|---|---|
+| Session just started / post-compaction / resume | `session-start` |
+| "plan ...", "let's plan ...", "create a plan for ..." | `create-plan` |
+| "progress update", "update progress", signals a break | `update-progress` |
+| "revise the plan", "the approach needs to change" | `revise-plan` |
+| "taking a break", "that's it for today", "pausing" | `pause` |
+| "plan is done", "all tasks complete", "wrap up" | `complete` |
