@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.0] - 2026-04-07
+
+### Changed
+- Delegate review-knowledge to Sonnet subagent to minimize main context consumption
+- Extract review-knowledge procedure into separate procedure.md
+- Change review-knowledge allowed-tools from `Read, Grep, Glob, Edit, Write` to `Read, Agent`
+
 ## [1.8.0] - 2026-04-05
 
 ### Added
@@ -74,6 +81,7 @@ All notable changes to this project will be documented in this file.
 - Plugin marketplace support via plugin.json
 - MIT License
 
+[1.9.0]: https://github.com/LevNas/ccmemo/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/LevNas/ccmemo/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/LevNas/ccmemo/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/LevNas/ccmemo/compare/v1.5.0...v1.6.0
