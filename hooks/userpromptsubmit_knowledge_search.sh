@@ -11,9 +11,6 @@ MIN_WORD_LEN=2
 HIT_COUNT_LIMIT=50
 ENTRIES_DIR=".claude/knowledge/entries"
 
-# TEMP: verification trace for initial rollout (remove after confirming hook fires).
-echo "$(date '+%Y-%m-%d %H:%M:%S') pwd=$(pwd)" >> /tmp/ccmemo-knowledge-hook.log 2>/dev/null || true
-
 # Silently no-op if required tools or entries dir are missing.
 command -v jq >/dev/null 2>&1 || exit 0
 command -v rg >/dev/null 2>&1 || exit 0
