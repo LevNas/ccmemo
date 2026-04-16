@@ -23,7 +23,7 @@ Capture tacit knowledge discovered during work and make it available for future 
 
 ## Execution
 
-Delegate the recording work to a Sonnet subagent to minimize main context consumption.
+Delegate the recording work to a subagent to minimize main context consumption.
 
 1. Analyze the user input or work context and prepare structured input fields
 2. Determine the knowledge base path (default: `.claude/knowledge/entries/`)
@@ -32,7 +32,6 @@ Delegate the recording work to a Sonnet subagent to minimize main context consum
 ```
 Agent(
   subagent_type: "general-purpose",
-  model: "sonnet",
   description: "record knowledge entry",
   prompt: |
     You are a knowledge recording agent. Read the procedure file and follow it precisely.
