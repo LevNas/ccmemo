@@ -315,25 +315,16 @@ export CCMEMO_CONTEXT_GUARD_THRESHOLD_KB=500  # default: 300
 
 Remove or comment out the relevant entry in `hooks/hooks.json`, or delete the `hooks/` directory.
 
-## For Contributors
+## Contributing
 
-ccmemo follows the LevNas plugin conventions maintained in [claudecode-plugins/docs/development-guide.md](https://github.com/LevNas/claudecode-plugins/blob/main/docs/development-guide.md). Document placement and SKILL.md frontmatter rules are summarized below.
-
-| Location | Purpose | Audience |
-|----------|---------|----------|
-| `README.md` | Plugin overview and usage | Users (humans) |
-| `skills/<name>/SKILL.md` | Skill definition with required frontmatter (`name`/`description`/`license`/`allowed-tools`) | Claude Code |
-| `skills/<name>/references/` | Runtime reference resources | Claude Code |
-| `docs/` | Developer/operator internal docs | Contributors (humans) |
-| `hooks/` | Hook implementations and `hooks.json` | Claude Code |
-| `templates/` | Project-scoped starter files copied into user projects | Users (humans) |
-
-Run the central linter from claudecode-plugins before sending a PR:
-
-```bash
-bash ~/src/github.com/LevNas/claudecode-plugins/scripts/lint-skills.sh ~/src/github.com/LevNas/ccmemo
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the project's scope, plugin conventions (document placement, SKILL.md frontmatter, the central linter command), pull request guidelines, and attribution requests for forks.
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE) — see the `LICENSE` file for the full text.
+
+In short: you're free to use, modify, and redistribute ccmemo, including for commercial purposes, as long as you keep the copyright notice and license text.
+
+If you build something based on ccmemo, a credit line is appreciated (not required):
+
+> Based on [ccmemo](https://github.com/LevNas/ccmemo) by LevNas.
