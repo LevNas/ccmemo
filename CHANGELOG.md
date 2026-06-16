@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.11.0] - 2026-06-16
+
+### Added
+- `/recall-knowledge` skill: on-demand **hybrid semantic search** over the knowledge base — lexical (ripgrep + mecab) fused with local vector embeddings and the `see:`-link graph (RRF), bridging synonyms and JA-query/EN-identifier gaps that keyword search misses
+- `scripts/kb_index.py` — build/refresh a per-machine vector index (sha256 incremental, idempotent)
+- `scripts/kb_search.py` — hybrid query (lexical + vector + RRF + `see:` expansion + frontmatter filters) with lazy re-embed of changed entries
+- `hooks/post-merge.sample` — consumer-side incremental re-index after `git pull`
+- `docs/hybrid-search.md` — setup, usage, and verification (incl. corporate TLS notes)
+
+### Requirements (optional — the feature is opt-in)
+- Semantic search needs `uv` (or Python ≥3.10) plus `fastembed` and `sqlite-vec`. The embedding model `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (~220 MB) is downloaded **once** and runs fully local — no knowledge text leaves the machine.
+- **Graceful fallback**: without the index or these deps, `/recall-knowledge` falls back to ripgrep-only — nothing breaks.
+- The vector index (`.claude/knowledge/.index/kb.db`) is a per-machine derived cache and **must not be committed** (gitignore it; see `docs/hybrid-search.gitignore-snippet.txt`).
+
+### Notes
+- The per-prompt `userpromptsubmit_knowledge_search.sh` hook is **unchanged** (stays ripgrep — instant, no model load). Semantic search is on-demand only.
+- First-time setup / verification covers dependency install, model download, index build, and corporate TLS inspection (`uv --system-certs` + `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`); see `docs/hybrid-search.md`.
+
+## [1.10.2] - 2026-04-16
+
+### Fixed
+- Remove Sonnet model pinning from the record-knowledge subagent so it inherits the active session model instead of forcing a fixed model
+
 ## [1.10.1] - 2026-04-10
 
 ### Removed
@@ -95,6 +118,10 @@ All notable changes to this project will be documented in this file.
 - Plugin marketplace support via plugin.json
 - MIT License
 
+[1.11.0]: https://github.com/LevNas/ccmemo/compare/v1.10.2...v1.11.0
+[1.10.2]: https://github.com/LevNas/ccmemo/compare/v1.10.1...v1.10.2
+[1.10.1]: https://github.com/LevNas/ccmemo/compare/v1.10.0...v1.10.1
+[1.10.0]: https://github.com/LevNas/ccmemo/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/LevNas/ccmemo/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/LevNas/ccmemo/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/LevNas/ccmemo/compare/v1.6.0...v1.7.0

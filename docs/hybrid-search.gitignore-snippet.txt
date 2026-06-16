@@ -1,0 +1,3 @@
+# Consumer .gitignore snippet for ccmemo hybrid search.
+# The knowledge search index is a per-machine derived cache; never commit it.
+.claude/knowledge/.index/

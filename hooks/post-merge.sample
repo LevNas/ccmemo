@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# ccmemo knowledge-index post-merge hook (SAMPLE — for consumers to install).
+#
+# After `git pull` / `git merge` updates the Markdown knowledge base, this runs an
+# *incremental* re-index so local hybrid search stays current. The index itself is
+# a per-machine derived cache and is NOT committed (see `.gitignore`:
+# `.claude/knowledge/.index/`). Only changed entries are re-embedded, so this is
+# cheap on a normal pull.
+#
+# Install (consumer side):
+#   cp path/to/ccmemo/hooks/post-merge.sample .git/hooks/post-merge
+#   chmod +x .git/hooks/post-merge
+#   # adjust KB_ROOT / KB_INDEX below if your layout differs
+#
+# It no-ops quietly when prerequisites (uv, the script, or the entries dir) are
+# missing, so it never blocks a merge.
+set -euo pipefail
+
+# Repo root (this hook lives in .git/hooks/).
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "${REPO_ROOT}" ] || exit 0
+
+KB_ROOT="${CCMEMO_KB_ROOT:-${REPO_ROOT}/.claude/knowledge/entries}"
+KB_INDEX="${CCMEMO_KB_INDEX:-${REPO_ROOT}/.claude/skills/.scripts/kb_index.py}"
+
+# Fallbacks for common install layouts (plugin vs. manual copy).
+if [ ! -f "${KB_INDEX}" ]; then
+  for cand in \
+    "${REPO_ROOT}/scripts/kb_index.py" \
+    "${REPO_ROOT}/.ccmemo/scripts/kb_index.py"; do
+    [ -f "${cand}" ] && KB_INDEX="${cand}" && break
+  done
+fi
+
+[ -d "${KB_ROOT}" ] || exit 0
+[ -f "${KB_INDEX}" ] || exit 0
+command -v uv >/dev/null 2>&1 || exit 0
+
+# Run in the background so the merge returns immediately; the model is already
+# cached after first use, and only changed entries are re-embedded.
+( uv run "${KB_INDEX}" "${KB_ROOT}" >/dev/null 2>&1 || true ) &
+
+exit 0

@@ -20,6 +20,10 @@ One entry per file with YAML frontmatter.
 
 ## Search
 
+### Keyword / tag search
+
+Instant, no setup — use when you know the literal term or tag:
+
 ```bash
 # Fuzzy search by filename
 fd -e md . .claude/knowledge/entries/ | fzf
@@ -34,6 +38,15 @@ rg '^title:' .claude/knowledge/entries/
 # Active entries only
 rg '^status: active' .claude/knowledge/entries/
 ```
+
+### Semantic search (by meaning)
+
+When keywords might miss the entry — synonyms, or a Japanese query against English
+identifiers — use the `/recall-knowledge` skill. It runs hybrid search (ripgrep +
+local vector embeddings + the `see:`-link graph) and falls back to ripgrep-only when
+the vector index or its optional dependencies are absent, so it never breaks. On-demand
+only; the per-prompt auto-injection hook stays ripgrep (instant, no model load). Setup:
+see the plugin's `docs/hybrid-search.md`.
 
 ## Tag Registry
 

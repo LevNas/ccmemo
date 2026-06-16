@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Adapting ccmemo for other tools or platforms
+    url: https://github.com/LevNas/ccmemo/blob/main/CONTRIBUTING.md#adapting-ccmemo-for-other-use-cases
+    about: Forks for other AI assistants, IDEs, or storage backends are encouraged — see the contributing guide for context.
