@@ -109,6 +109,17 @@ rg '^title:' .claude/knowledge/entries/
 rg '^status: active' .claude/knowledge/entries/
 ```
 
+#### Semantic search (recall-knowledge, experimental)
+
+Beyond the keyword/filename lookups above, `/recall-knowledge` runs **hybrid semantic search** —
+ripgrep + local vector embeddings + the `see:`-link graph — so a query surfaces relevant entries
+even when worded differently (synonyms, or a Japanese query vs English identifiers). It runs
+on demand (the per-prompt hook stays ripgrep-only, instant and model-free) and falls back to
+ripgrep when the vector index or its dependencies are absent.
+
+- Setup & how it works: [docs/hybrid-search.md](docs/hybrid-search.md)
+- Verification / re-setup steps (incl. corporate TLS): [docs/RUNBOOK-verify-hybrid-search.md](docs/RUNBOOK-verify-hybrid-search.md)
+
 ### Reviewing Knowledge
 
 Periodically run `/review-knowledge` to maintain knowledge base health:

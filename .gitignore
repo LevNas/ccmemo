@@ -1,1 +1,5 @@
 .claude/
+
+# Python bytecode from scripts/ (kb_index.py / kb_search.py)
+__pycache__/
+*.pyc
