@@ -1,5 +1,9 @@
 # ccmemo
 
+[![lint](https://github.com/LevNas/ccmemo/actions/workflows/lint.yml/badge.svg)](https://github.com/LevNas/ccmemo/actions/workflows/lint.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c5cff)
+
 Claude Code starts every session with a blank slate. The quirk you debugged yesterday,
 the plan you were halfway through — all gone when the session ends. ccmemo saves that
 knowledge and progress as Markdown files in your repository, so the next session picks
@@ -174,15 +178,20 @@ workflow as your code:
 - [docs/RUNBOOK-verify-hybrid-search.md](docs/RUNBOOK-verify-hybrid-search.md) — verification & corporate TLS
 - [docs/claude-md-examples.md](docs/claude-md-examples.md) — CLAUDE.md configuration
 
+## Getting help
+
+- **Usage or design questions** — open a [Question issue](https://github.com/LevNas/ccmemo/issues/new?template=question.md)
+- **Bugs & feature requests** — pick a template from [new issue](https://github.com/LevNas/ccmemo/issues/new/choose)
+- **What changed** — see the [CHANGELOG](CHANGELOG.md)
+
 ## Contributing
 
+Maintained by [@LevNas](https://github.com/LevNas); contributions and forks welcome.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for scope, plugin conventions, the linter
 command, and pull request guidelines.
 
 ## License
 
-[MIT](LICENSE) — free to use, modify, and redistribute, including commercially, as long
-as you keep the copyright notice. If you build on ccmemo, a credit line is appreciated
-(not required):
+[MIT](LICENSE). If you build on ccmemo, a credit line is appreciated (not required):
 
 > Based on [ccmemo](https://github.com/LevNas/ccmemo) by LevNas.
