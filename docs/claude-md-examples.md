@@ -79,9 +79,18 @@ rg '^status: active' .claude/knowledge/entries/ -l | xargs rg '<keyword>' -l
 \```
 Then Read the matching file.
 
+### Search by meaning (keyword search came up empty)
+
+When literal keywords miss — synonyms, or a query worded differently from the entries
+(e.g. a Japanese query against English identifiers) — run the `/recall-knowledge` skill.
+It does hybrid semantic search (ripgrep + local vector embeddings + the `see:`-link graph)
+and falls back to ripgrep when the index is unavailable, so it is always safe to try.
+
 ### Rules
 - Only reference entries with `status: active` — ignore `deprecated` entries
 - Replace `<keyword>` with terms relevant to the current task (service name, technology, etc.)
+- If keyword search returns nothing relevant, retry with `/recall-knowledge` before
+  concluding "no knowledge entry found"
 ```
 
 ## Plan Persistence (Git-tracked mode)
