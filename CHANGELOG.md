@@ -20,6 +20,11 @@ All notable changes to this project will be documented in this file.
 - The per-prompt `userpromptsubmit_knowledge_search.sh` hook is **unchanged** (stays ripgrep — instant, no model load). Semantic search is on-demand only.
 - First-time setup / verification: follow `docs/RUNBOOK-verify-hybrid-search.md` — it covers dependency install, model download, index build, and corporate TLS inspection (`uv --system-certs` + `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`).
 
+## [1.10.2] - 2026-04-16
+
+### Fixed
+- Remove Sonnet model pinning from the record-knowledge subagent so it inherits the active session model instead of forcing a fixed model
+
 ## [1.10.1] - 2026-04-10
 
 ### Removed
@@ -113,6 +118,10 @@ All notable changes to this project will be documented in this file.
 - Plugin marketplace support via plugin.json
 - MIT License
 
+[1.11.0]: https://github.com/LevNas/ccmemo/compare/v1.10.2...v1.11.0
+[1.10.2]: https://github.com/LevNas/ccmemo/compare/v1.10.1...v1.10.2
+[1.10.1]: https://github.com/LevNas/ccmemo/compare/v1.10.0...v1.10.1
+[1.10.0]: https://github.com/LevNas/ccmemo/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/LevNas/ccmemo/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/LevNas/ccmemo/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/LevNas/ccmemo/compare/v1.6.0...v1.7.0
