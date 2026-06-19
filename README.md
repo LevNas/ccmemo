@@ -20,27 +20,54 @@ ccmemo adds four slash commands that persist knowledge and plans as plain Markdo
 Claude Code invokes these automatically when relevant; you can also trigger any of them
 by name.
 
-## Install
+## Quick start
 
-### Plugin (recommended)
+Up and running in three steps. The plugin is the recommended path — skills and hooks
+activate the moment it's installed.
 
-```bash
+**1. Install the plugin** (in Claude Code):
+
+```
 /plugin marketplace add LevNas/claudecode-plugins
 /plugin install ccmemo@levnas-plugins
 ```
 
-Then copy the starter templates into your project root:
+That alone makes `/record-knowledge`, `/plan-task`, `/review-knowledge`, and
+`/recall-knowledge` available and wires up the [Context Guard](docs/architecture.md#context-guard-since-v110) hooks.
+
+**2. Scaffold the starter config** into your project — a tag registry for knowledge and
+an index for tasks. Easiest is to just ask Claude Code:
+
+> Scaffold ccmemo's knowledge and tasks templates into `.claude/`.
+
+Prefer a command? From your project root:
 
 ```bash
-cp -r path/to/ccmemo/templates/knowledge .claude/knowledge
-cp -r path/to/ccmemo/templates/tasks .claude/tasks
+tpl=$(find ~/.claude/plugins/cache -type d -path '*ccmemo*/templates' | sort | tail -1)
+cp -r "$tpl/knowledge" .claude/knowledge
+cp -r "$tpl/tasks"     .claude/tasks
 ```
 
-### Manual copy
+**3. Try it.** Run `/record-knowledge` and describe something worth remembering — Claude
+writes a Markdown entry under `.claude/knowledge/entries/`. Commit it, and your next
+session (or a teammate's) finds it automatically.
 
-If you'd rather not use the marketplace, copy just the skills and templates you need
-(e.g. `cp -r path/to/ccmemo/skills/record-knowledge .claude/skills/`). Each skill is a
-self-contained `SKILL.md`. Your project ends up with:
+> Semantic search via `/recall-knowledge` is opt-in (one-time index build) — see
+> [docs/hybrid-search.md](docs/hybrid-search.md).
+
+### Without the marketplace
+
+Copy the skills and templates straight from the repo:
+
+```bash
+git clone --depth 1 https://github.com/LevNas/ccmemo /tmp/ccmemo
+cp -r /tmp/ccmemo/skills/*            .claude/skills/      # the four skills
+cp -r /tmp/ccmemo/templates/knowledge .claude/knowledge
+cp -r /tmp/ccmemo/templates/tasks     .claude/tasks
+rm -rf /tmp/ccmemo
+```
+
+Your project ends up with:
 
 ```
 your-project/.claude/
@@ -48,6 +75,9 @@ your-project/.claude/
 ├── knowledge/{CLAUDE.md,entries/}
 └── tasks/{CLAUDE.md,readme.md}
 ```
+
+Hooks (Context Guard) are wired through the plugin; with a manual copy, add the
+`hooks/hooks.json` entries yourself if you want them.
 
 ## Example
 
