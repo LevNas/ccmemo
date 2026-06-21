@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.0] - 2026-06-22
+
+### Added
+- **Redact-on-record**: a deterministic PostToolUse guard (`hooks/postwrite_redact_entries.py`) that sanitizes knowledge entries on write, so recording no longer relies on the model remembering to redact. Hybrid behaviour: unambiguous secret *values* are masked in place; leak-prone *shapes* are warned about (not auto-edited). Registered first in the `Write|Edit` chain.
+- `hooks/lib/redact.py` — shared redact SPEC (sensitive-key + value-pattern masking: `op://`, JWT, PEM, GitHub token, non-noreply email). The entry-body profile deliberately excludes the high-entropy pattern so it never clobbers git SHAs / long paths / base64 examples.
+- `hooks/lib/leak_scan.py` — leak-prone shape detection (UUID, home-path, `${...}` unexpanded placeholders, base64-ish blobs, and private repo names supplied at runtime via `$CCMEMO_PRIVATE_REPO_NAMES` so no private name is baked into this public source).
+- `tests/test_policy.py` — dependency-free self-tests for redact & leak-scan.
+
+### Changed
+- `hooks/stop_context_guard.py`: the context-size stop guard now blocks **once** so the *model* self-assesses whether the session produced knowledge worth recording. The reason returns to the model (not a yes/no question to the user), which then invokes record-knowledge / session-wrap or ends the session for routine work — avoiding the prior false block on e.g. install-only sessions. `stop_hook_active` guarantees the second stop is allowed.
+
 ## [1.11.0] - 2026-06-16
 
 ### Added

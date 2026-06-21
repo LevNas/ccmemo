@@ -39,6 +39,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/postwrite_redact_entries.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse_context_writer.py\"",
             "timeout": 5
           },
