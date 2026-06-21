@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.13.0] - 2026-06-22
+
+### Added
+- **Opt-in auto-commit safety net**: a `SessionEnd` hook (`hooks/sessionend_autocommit.py`) plus the existing `PreCompact` hook commit *only* `.claude/knowledge/` and `.claude/tasks/` changes when `CCMEMO_AUTOCOMMIT=1` is set. Off by default; never runs `git add -A`; **never pushes** (push stays a human gate). It complements — does not replace — the manual session-wrap commit, so it is a no-op once you have already committed.
+- `hooks/lib/autocommit.py` — shared commit core for both hooks. Gates, in order: opt-in env → inside a git work tree → no merge/rebase/cherry-pick in progress → target pathspec has changes → leak-scan clean. Commit messages carry **no AI-attribution trailers** and list the changed entry names.
+- Leak-scan gate reuses `hooks/lib/leak_scan.py`: leak-prone shapes block the commit by default; set `CCMEMO_AUTOCOMMIT_ON_LEAK=warn` to commit with a stderr warning instead.
+- `tests/test_autocommit.py` — dependency-free self-tests (opt-in no-op, pathspec scoping, leak block/warn, mid-merge skip, no AI-attribution).
+
+### Changed
+- `hooks/hooks.json`: register the `SessionEnd` hook (timeout 30); raise the `PreCompact` timeout 10 → 30 to accommodate the optional commit.
+- `hooks/precompact_checkpoint.py`: after saving its checkpoint, performs the opt-in auto-commit (shared `lib/autocommit.py`) and notes the result in its systemMessage.
+
 ## [1.12.0] - 2026-06-22
 
 ### Added

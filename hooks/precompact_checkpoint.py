@@ -16,6 +16,9 @@ import re
 import sys
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib import autocommit  # noqa: E402
+
 
 def extract_modified_files(lines: list[str]) -> list[str]:
     """Extract file paths from Write/Edit tool calls in transcript lines."""
@@ -199,6 +202,17 @@ def update_session_state(
         pass
 
 
+def _commit_note(result: "autocommit.CommitResult") -> str:
+    """Short systemMessage suffix describing the opt-in safety-net commit."""
+    if result.status == "committed":
+        return f" Auto-committed {len(result.files)} knowledge/tasks file(s)."
+    if result.status == "blocked":
+        return f" Auto-commit blocked by leak-scan ({len(result.findings)} finding(s))."
+    if result.status == "error":
+        return f" Auto-commit error: {result.reason}."
+    return ""
+
+
 def main() -> None:
     try:
         input_data = json.load(sys.stdin)
@@ -209,6 +223,10 @@ def main() -> None:
     session_id = input_data.get("session_id", "unknown")
     trigger = input_data.get("trigger", "auto")
     cwd = input_data.get("cwd", os.getcwd())
+
+    # Opt-in safety-net commit of knowledge/tasks (shared with the SessionEnd
+    # hook). Runs independently of whether there is a transcript to checkpoint.
+    commit_note = _commit_note(autocommit.run(cwd, "PreCompact"))
 
     if not transcript_path or not os.path.isfile(transcript_path):
         return
@@ -293,7 +311,7 @@ def main() -> None:
         "systemMessage": (
             f"Context checkpoint saved: {checkpoint_path} "
             f"({len(modified_files)} files, {len(user_decisions)} decisions)."
-            f"{knowledge_note}{state_note}"
+            f"{knowledge_note}{state_note}{commit_note}"
             " On resume: run TaskList, then read session_state.md for quick recovery."
         )
     }

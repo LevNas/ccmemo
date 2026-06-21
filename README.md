@@ -158,6 +158,13 @@ before starting work. Patterns and examples: [docs/claude-md-examples.md](docs/c
   hosting username.
 - **Workflow** — edit any `skills/*/SKILL.md` to add project-specific conventions
   (tag categories, issue-tracker comment formats, plan templates).
+- **Auto-commit (opt-in, off by default)** — set `CCMEMO_AUTOCOMMIT=1` and a
+  safety-net hook commits *only* `.claude/knowledge/` and `.claude/tasks/` changes
+  at session end (`SessionEnd`) and before compaction (`PreCompact`). It never runs
+  `git add -A`, **never pushes**, and a leak-scan gate blocks commits containing
+  leak-prone shapes (set `CCMEMO_AUTOCOMMIT_ON_LEAK=warn` to commit with a warning
+  instead). It complements — does not replace — your manual end-of-session commit,
+  so it is a no-op when you have already committed.
 
 ## Why Use It in a Git Repository
 
