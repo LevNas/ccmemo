@@ -55,6 +55,56 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+
+def _nixos_libstdcxx_preflight() -> None:
+    """NixOS: re-exec with libstdc++ on LD_LIBRARY_PATH if numpy cannot load it.
+
+    numpy's manylinux wheel (a transitive dep of fastembed) needs libstdc++.so.6,
+    which the Nix-native CPython cannot resolve: that interpreter is not loaded
+    through the nix-ld shim, so NIX_LD_LIBRARY_PATH is never consulted and the
+    import dies with "libstdc++.so.6: cannot open shared object file". Plain
+    LD_LIBRARY_PATH is the only effective channel, so re-exec once with it
+    pointing at gcc's libstdc++ directory. No-op on other platforms and on
+    already-working setups. See https://github.com/LevNas/ccmemo/issues/13.
+    """
+    import os
+
+    if not os.path.exists("/etc/NIXOS") or os.environ.get("CCMEMO_LIBSTDCXX_REEXEC"):
+        return
+    try:
+        import numpy  # noqa: F401
+        return
+    except ImportError as exc:
+        if "libstdc++" not in str(exc):
+            return
+
+    import shutil
+    import subprocess
+
+    gcc = shutil.which("gcc")
+    if not gcc:
+        return  # nothing we can do; let the import error surface at first use
+    try:
+        libstdcxx = subprocess.run(
+            [gcc, "-print-file-name=libstdc++.so.6"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return
+    if not libstdcxx.startswith("/"):
+        return  # gcc echoes the bare name back when it cannot resolve the file
+
+    env = dict(os.environ)
+    libdir = os.path.dirname(libstdcxx)
+    env["LD_LIBRARY_PATH"] = (
+        f"{libdir}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else libdir
+    )
+    env["CCMEMO_LIBSTDCXX_REEXEC"] = "1"
+    os.execve(sys.executable, [sys.executable, *sys.argv], env)
+
+
+_nixos_libstdcxx_preflight()
+
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 EMBED_DIM = 384
 # Entries longer than this many characters also get per-`##`-section chunks.

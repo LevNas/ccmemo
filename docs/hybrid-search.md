@@ -100,6 +100,16 @@ chmod +x .git/hooks/post-merge
 # adjust CCMEMO_KB_ROOT / CCMEMO_KB_INDEX env vars if your layout differs
 ```
 
+## NixOS
+
+On NixOS, numpy's manylinux wheel cannot resolve `libstdc++.so.6` when the
+scripts run under the Nix-native CPython (nix-ld's `NIX_LD_LIBRARY_PATH` is not
+consulted for it, because that interpreter does not go through the nix-ld shim).
+Both scripts detect this at startup and re-exec themselves once with
+`LD_LIBRARY_PATH` pointing at gcc's libstdc++ directory
+(`gcc -print-file-name=libstdc++.so.6`), so no manual setup is needed as long
+as `gcc` is on `PATH`. See issue #13 for the full analysis.
+
 ## Status
 
 Experimental vertical slice. It is **not wired into**
