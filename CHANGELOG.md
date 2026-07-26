@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.15.0] - 2026-07-27
 
 ### Added
 - `scripts/kb_graph.py` — link-graph CLI over the knowledge base: `stats` (hubs,
