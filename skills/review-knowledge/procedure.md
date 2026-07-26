@@ -9,6 +9,23 @@ Maintain knowledge base health and surface entries for review, helping the user 
 - `.claude/knowledge/entries/` directory exists with entries created by `record-knowledge`
 - `.claude/knowledge/CLAUDE.md` tag registry exists
 
+## Precomputed Graph Facts (input)
+
+The input may contain `graph_stats` and `graph_lint` sections — deterministic output of
+`scripts/kb_graph.py` (link graph + lint), precomputed by the main agent. When present
+(not `(unavailable)`), treat them as ground truth instead of re-deriving by hand:
+
+- `graph_stats` covers orphan detection (b), and the connectivity part of the summary
+  statistics (e): hubs, edge counts, connected components
+- `graph_lint` covers broken see links (g), broken file references (h — `broken-link`
+  and `out-of-tree` findings), unregistered tags (part of d), plus `self-link`,
+  `duplicate-link`, `missing-title`, and `filename` findings
+
+Spend the saved effort on the judgment sections the script cannot do: staleness (a),
+missing connections (c), synthesis candidates (j), overviews (l), topic summaries.
+When the sections are absent or `(unavailable)`, derive everything by reading files
+as described below.
+
 ## Review Modes
 
 Execute the mode specified in the input. If no mode is given, run **health check**.

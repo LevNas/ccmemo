@@ -12,11 +12,15 @@ subagents are sandboxed and cannot run `uv` / Python). On-demand only.
 - `SEARCH`  = `{plugin_root}/scripts/kb_search.py`
 - `INDEX`   = `{project_root}/.claude/knowledge/.index/kb.db`
 - `BUILDER` = `{plugin_root}/scripts/kb_index.py` (referenced only when advising a build)
+- `GRAPH`   = `{plugin_root}/scripts/kb_graph.py` (pure stdlib — works without `uv` or `INDEX`)
 
 ## Step 2. Decide hybrid vs fallback
 Hybrid is available **iff** `uv` is on `PATH` **and** `INDEX` exists.
 - Both present → Step 3a (hybrid).
 - Otherwise → Step 3b (ripgrep fallback).
+
+Either way, if the recall looks **multi-hop** (see Step 3c), pull graph structure
+first and use search only to find the starting entry.
 
 ## Step 3a. Hybrid search (preferred)
 Run from Bash (main agent):
@@ -47,6 +51,27 @@ Notes:
   uv run "{plugin_root}/scripts/kb_index.py" "{KB_ROOT}"
   ```
   (first run downloads ~220 MB model; under corporate TLS see `docs/hybrid-search.md`)
+
+## Step 3c. Structure first when the recall is multi-hop
+Signals that a flat top-N search will NOT answer in one shot:
+- Tracing lineage: "how did this decision evolve", "what led to X"
+- Connecting topics: "how are X and Y related", "is there prior art linking X to Y"
+- Mapping an area: "everything we know around X", before refactoring a topic cluster
+
+For those, do **not** loop search → Read → follow `see:` → Read again (each hop reads a
+full body just to decide where to go next). Instead:
+
+```bash
+python3 "{plugin_root}/scripts/kb_graph.py" --root "{KB_ROOT}" neighborhood <entry> --depth 2
+python3 "{plugin_root}/scripts/kb_graph.py" --root "{KB_ROOT}" path <entryA> <entryB>
+```
+
+- Entries are addressed by unique filename substring; use Step 3a/3b (or `stats` for
+  hubs) only to identify the starting entry when it is not already known.
+- Output is structure only — IDs, titles, edge kinds, never body text — so it is cheap
+  to keep in context. Plan the route from it, then **Read only the endpoint entries**
+  (typically 1–3) that actually answer the question.
+- Runs with plain `python3` (stdlib only): available even when hybrid search is not.
 
 ## Step 4. Present results
 - Show the ranked entries as printed by kb_search.py: score, title, relpath, tags, snippet.

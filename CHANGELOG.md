@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `scripts/kb_graph.py` — link-graph CLI over the knowledge base: `stats` (hubs,
+  orphans, connected components), `neighborhood` (BFS around an entry), `path`
+  (shortest link path), and a deterministic `lint` (broken/out-of-tree/self/duplicate
+  links, missing titles, filename format, unregistered tags; exit 1 on findings, so it
+  slots into pre-commit). Pure stdlib — no uv, no index, no network. The graph is
+  built on demand from `- see:` / `- ref:` links (no persisted index to go stale), and
+  query output is structure only (IDs, titles, edge kinds — never body text), so it
+  stays cheap to keep in a model context.
+- `tests/test_kb_graph.py` — dependency-free self-tests over a synthetic knowledge
+  base (link resolution, broken-link vs out-of-tree classification, components, CLI
+  JSON output, lint exit codes and file scoping).
+
+### Changed
+- `recall-knowledge` skill: multi-hop recalls (tracing how a decision evolved,
+  connecting two topics, mapping an area) now query graph structure first via
+  `kb_graph.py neighborhood` / `path` and read only the endpoint entries, instead of
+  chaining search → read → follow links → read again.
+- `review-knowledge` skill: the main agent precomputes `kb_graph.py stats` + `lint`
+  (deterministic, ~1s) and passes the output to the review subagent, which spends its
+  effort on judgment work (staleness, missing connections, synthesis) instead of
+  re-deriving link facts by hand. Skill now allows Bash for that precompute step;
+  graceful fallback to the previous read-everything behaviour when `python3` is
+  unavailable.
+
 ## [1.13.0] - 2026-06-22
 
 ### Added
