@@ -16,6 +16,11 @@ cache** — regenerable at any time and **never committed to git**.
 | `scripts/kb_search.py` | Query: lexical + vector arms, RRF fusion, `see:` 1-hop expansion, frontmatter filters |
 | `hooks/post-merge.sample` | Consumer git hook: incremental re-index after `git pull` |
 
+For structural / multi-hop queries that need no index at all — hubs, orphans,
+neighborhoods, shortest link paths, link lint — see the pure-stdlib
+`scripts/kb_graph.py` in [link-graph.md](link-graph.md); it complements the
+meaning-based retrieval described here.
+
 ## Dependencies
 
 - [`fastembed`](https://pypi.org/project/fastembed/) — local ONNX embeddings.

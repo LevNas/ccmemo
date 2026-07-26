@@ -85,6 +85,8 @@ When literal keywords miss — synonyms, or a query worded differently from the 
 (e.g. a Japanese query against English identifiers) — run the `/recall-knowledge` skill.
 It does hybrid semantic search (ripgrep + local vector embeddings + the `see:`-link graph)
 and falls back to ripgrep when the index is unavailable, so it is always safe to try.
+For multi-hop questions (how a decision evolved, how two topics connect) it queries the
+link-graph structure first and reads only the endpoint entries (see docs/link-graph.md).
 
 ### Rules
 - Only reference entries with `status: active` — ignore `deprecated` entries
