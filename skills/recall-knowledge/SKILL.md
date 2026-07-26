@@ -24,6 +24,13 @@ cross-language wording (e.g. Japanese ↔ English identifiers) that literal keyw
 - NOT for per-prompt automatic injection — that stays ripgrep via the existing
   `userpromptsubmit_knowledge_search.sh` hook (instant, no model load)
 
+## Structure First for Multi-Hop Questions
+When the recall looks like it needs several hops — tracing how a decision evolved,
+asking how two topics connect, or mapping everything around an entry — do NOT chain
+search → read → follow links → read again. Query the link graph first
+(`kb_graph.py neighborhood` / `path`), pick the endpoints from the structure
+(IDs + titles only), and Read just those entries. Details in the procedure file.
+
 ## Execution (run directly — do NOT delegate to a subagent)
 
 IMPORTANT: hybrid search executes code (`uv run` a Python script). Subagents run in a sandbox
@@ -38,6 +45,7 @@ Paths:
 - Knowledge base: {project_root}/.claude/knowledge/
 - Search script:  {plugin_root}/scripts/kb_search.py
 - Index builder:  {plugin_root}/scripts/kb_index.py (only to advise building the index)
+- Graph CLI:      {plugin_root}/scripts/kb_graph.py (pure stdlib — needs neither uv nor the index)
 
 IMPORTANT: The procedure / script paths use the plugin's base directory, NOT the project
 directory. Read the "Base directory for this skill" line from the skill loading message to

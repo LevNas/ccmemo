@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""Link-graph CLI over a ccmemo knowledge base.
+
+Builds the entry graph on demand from `- see:` / `- ref:` list links
+(no persisted index; ~1s for a few hundred entries). Pure stdlib —
+runs with plain python3, no uv, no vector index, no network.
+
+Subcommands:
+  stats                  graph overview: hubs, orphans, components
+  neighborhood <entry>   BFS neighborhood (structure only, no body text)
+  path <a> <b>           shortest link path between two entries
+  lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings)
+
+Output contains entry IDs, titles and edge types only — never body text —
+so results stay cheap to inject into a model context. The intended flow is
+structure first, bodies last: use neighborhood/path to plan where to go,
+then read only the endpoint entries.
+
+lint is deterministic by design (no model calls) so it can gate commits;
+judgment work such as staleness review stays in /review-knowledge.
+
+Usage (from the project root):
+    python3 scripts/kb_graph.py stats
+    python3 scripts/kb_graph.py neighborhood <partial-name> --depth 2
+    python3 scripts/kb_graph.py path <partial-name-a> <partial-name-b>
+    python3 scripts/kb_graph.py lint [changed-files...]
+
+Entries are addressed by unique filename substring. `--json` gives
+machine-readable output. `--root` points at the entries dir
+(default: .claude/knowledge/entries).
+
+pre-commit example (fires only when staged entries changed):
+    changed=$(git diff --cached --name-only -- .claude/knowledge/entries/)
+    [ -z "$changed" ] || python3 scripts/kb_graph.py lint $changed
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+from collections import deque
+
+LINK_RE = re.compile(r"^\s*-\s+(see|ref):\s*\[([^\]]*)\]\(([^)]+)\)", re.MULTILINE)
+# Both registry line forms in use: "- #tag — description (count)" and "`#tag`"
+TAG_REGISTRY_RES = (
+    re.compile(r"^- (#[\w\-]+)", re.MULTILINE),
+    re.compile(r"^`(#[\w\-]+)`$", re.MULTILINE),
+)
+FILENAME_RE = re.compile(r"^\d{8}-\d{6}-.+\.md$")
+
+
+def parse_frontmatter(text):
+    meta = {}
+    if not text.startswith("---"):
+        return meta
+    end = text.find("\n---", 3)
+    if end == -1:
+        return meta
+    for line in text[3:end].splitlines():
+        m = re.match(r"^(\w+):\s*(.*)$", line.strip())
+        if m:
+            meta[m.group(1)] = m.group(2).strip().strip('"')
+    return meta
+
+
+def load_graph(root):
+    """Return (nodes, edges, problems).
+
+    nodes: {id: {"title", "tags", "status"}} — id is path relative to entries root
+    edges: [(src, dst, kind, resolution)] — resolution: "root" | "fallback"
+    problems: lint findings collected during parsing
+    """
+    root = os.path.abspath(root)
+    nodes, edges, problems = {}, [], []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in sorted(filenames):
+            if not fn.endswith(".md") or fn == "CLAUDE.md":
+                continue
+            path = os.path.join(dirpath, fn)
+            nid = os.path.relpath(path, root)
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            meta = parse_frontmatter(text)
+            nodes[nid] = {
+                "title": meta.get("title", ""),
+                "tags": set(re.findall(r"#[\w\-]+", meta.get("tags", ""))),
+                "status": meta.get("status", ""),
+            }
+            if not meta.get("title"):
+                problems.append((nid, "missing-title", "no frontmatter title"))
+            if not FILENAME_RE.match(fn):
+                problems.append((nid, "filename", "does not match <date>-<time>-...-<slug>.md"))
+            for kind, _label, target in LINK_RE.findall(text):
+                t = target.split("#")[0].strip()
+                if not t or t.startswith(("http://", "https://")):
+                    continue
+                cand_root = os.path.normpath(os.path.join(root, t))
+                cand_file = os.path.normpath(os.path.join(dirpath, t))
+                if os.path.exists(cand_root):
+                    resolved, resolution = cand_root, "root"
+                elif os.path.exists(cand_file):
+                    resolved, resolution = cand_file, "fallback"
+                else:
+                    # targets escaping the repository resolve differently per
+                    # checkout location (worktrees, other machines) — report
+                    # them separately from links broken inside the repo.
+                    # assumes root is <repo>/.claude/knowledge/entries
+                    repo_root = os.path.normpath(os.path.join(root, "..", "..", ".."))
+                    in_repo = (cand_root.startswith(repo_root + os.sep)
+                               or cand_file.startswith(repo_root + os.sep))
+                    check = "broken-link" if in_repo else "out-of-tree"
+                    problems.append((nid, check, f"{kind}: ({t}) resolves to no file"))
+                    continue
+                if resolved.startswith(root + os.sep):
+                    dst = os.path.relpath(resolved, root)
+                    if dst == nid:
+                        problems.append((nid, "self-link", f"{kind}: links to itself"))
+                        continue
+                    edges.append((nid, dst, kind, resolution))
+                # links leaving the entries tree (rules, docs...) are checked
+                # for existence above but are not part of the entry graph
+    seen = set()
+    deduped = []
+    for e in edges:
+        key = e[:3]
+        if key in seen:
+            problems.append((e[0], "duplicate-link", f"{e[2]}: ({e[1]}) listed more than once"))
+            continue
+        seen.add(key)
+        deduped.append(e)
+    return nodes, deduped, problems
+
+
+def adjacency(nodes, edges):
+    out_adj = {n: [] for n in nodes}
+    in_adj = {n: [] for n in nodes}
+    for src, dst, kind, _res in edges:
+        if src in out_adj and dst in in_adj:
+            out_adj[src].append((dst, kind))
+            in_adj[dst].append((src, kind))
+    return out_adj, in_adj
+
+
+def components(nodes, edges):
+    parent = {n: n for n in nodes}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for src, dst, _kind, _res in edges:
+        if src in parent and dst in parent:
+            parent[find(src)] = find(dst)
+    comps = {}
+    for n in nodes:
+        comps.setdefault(find(n), []).append(n)
+    return sorted(comps.values(), key=len, reverse=True)
+
+
+def resolve_entry(nodes, query):
+    if query in nodes:
+        return query
+    matches = [n for n in nodes if query in n]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        sys.exit(f"error: no entry matches '{query}'")
+    sys.exit("error: ambiguous query '%s' (%d matches):\n  %s"
+             % (query, len(matches), "\n  ".join(sorted(matches)[:10])))
+
+
+def short(title, width=70):
+    return title if len(title) <= width else title[: width - 1] + "…"
+
+
+def cmd_stats(nodes, edges, as_json):
+    out_adj, in_adj = adjacency(nodes, edges)
+    degree = {n: len(out_adj[n]) + len(in_adj[n]) for n in nodes}
+    hubs = sorted(nodes, key=lambda n: degree[n], reverse=True)[:10]
+    orphans = sorted(n for n in nodes if degree[n] == 0)
+    comps = components(nodes, edges)
+    kinds = {}
+    for _s, _d, k, _r in edges:
+        kinds[k] = kinds.get(k, 0) + 1
+    if as_json:
+        print(json.dumps({
+            "nodes": len(nodes), "edges": len(edges), "edge_kinds": kinds,
+            "hubs": [{"id": n, "in": len(in_adj[n]), "out": len(out_adj[n]),
+                      "title": nodes[n]["title"]} for n in hubs],
+            "orphans": orphans,
+            "components": [len(c) for c in comps],
+        }, ensure_ascii=False, indent=1))
+        return
+    print(f"nodes: {len(nodes)}  edges: {len(edges)}  ({', '.join(f'{k}={v}' for k, v in sorted(kinds.items()))})")
+    print(f"components: {len(comps)}  sizes: {[len(c) for c in comps[:8]]}"
+          + (" ..." if len(comps) > 8 else ""))
+    print("\ntop hubs (in/out):")
+    for n in hubs:
+        print(f"  {len(in_adj[n]):3d}/{len(out_adj[n]):<3d} {n}")
+        print(f"          {short(nodes[n]['title'])}")
+    print(f"\norphans (no links in either direction): {len(orphans)}")
+    for n in orphans:
+        print(f"  {n}  {short(nodes[n]['title'], 50)}")
+
+
+def cmd_neighborhood(nodes, edges, start, depth, as_json):
+    out_adj, in_adj = adjacency(nodes, edges)
+    visited = {start: 0}
+    rows = []
+    q = deque([start])
+    while q:
+        cur = q.popleft()
+        if visited[cur] >= depth:
+            continue
+        neigh = [(dst, kind, "→") for dst, kind in out_adj[cur]] + \
+                [(src, kind, "←") for src, kind in in_adj[cur]]
+        for other, kind, direction in neigh:
+            if other not in visited:
+                visited[other] = visited[cur] + 1
+                rows.append((visited[other], cur, direction, kind, other))
+                q.append(other)
+    if as_json:
+        print(json.dumps({"start": start, "depth": depth,
+                          "neighbors": [{"depth": d, "from": c, "dir": dr, "kind": k,
+                                         "id": o, "title": nodes[o]["title"]}
+                                        for d, c, dr, k, o in rows]},
+                         ensure_ascii=False, indent=1))
+        return
+    print(f"{start}\n  {short(nodes[start]['title'])}\n")
+    for d, _cur, direction, kind, other in rows:
+        print(f"  d{d} {direction}{kind:<4} {other}")
+        print(f"           {short(nodes[other]['title'])}")
+    print(f"\n{len(rows)} entries within depth {depth}")
+
+
+def cmd_path(nodes, edges, a, b, as_json):
+    out_adj, in_adj = adjacency(nodes, edges)
+    prev = {a: None}
+    q = deque([a])
+    while q and b not in prev:
+        cur = q.popleft()
+        neigh = [(dst, kind, "→") for dst, kind in out_adj[cur]] + \
+                [(src, kind, "←") for src, kind in in_adj[cur]]
+        for other, kind, direction in neigh:
+            if other not in prev:
+                prev[other] = (cur, kind, direction)
+                q.append(other)
+    if b not in prev:
+        print(f"no path between\n  {a}\n  {b}")
+        sys.exit(1)
+    chain = []
+    cur = b
+    while prev[cur]:
+        parent, kind, direction = prev[cur]
+        chain.append((parent, direction, kind, cur))
+        cur = parent
+    chain.reverse()
+    if as_json:
+        print(json.dumps({"hops": len(chain),
+                          "path": [{"from": p, "dir": d, "kind": k, "to": t}
+                                   for p, d, k, t in chain]}, ensure_ascii=False, indent=1))
+        return
+    print(f"{a}\n  {short(nodes[a]['title'])}")
+    for _parent, direction, kind, target in chain:
+        print(f"    {direction}{kind}")
+        print(f"{target}\n  {short(nodes[target]['title'])}")
+    print(f"\n{len(chain)} hops")
+
+
+def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json):
+    findings = list(problems)
+    if registry_path and os.path.isfile(registry_path):
+        with open(registry_path, encoding="utf-8") as f:
+            registry_text = f.read()
+        registry = set()
+        for pat in TAG_REGISTRY_RES:
+            registry.update(pat.findall(registry_text))
+        for nid, info in nodes.items():
+            unknown = info["tags"] - registry
+            if unknown:
+                findings.append((nid, "unknown-tag",
+                                 "not in registry: " + " ".join(sorted(unknown))))
+    if only_files:
+        keys = {os.path.basename(f) for f in only_files}
+        findings = [f for f in findings if os.path.basename(f[0]) in keys]
+    findings.sort()
+    if as_json:
+        print(json.dumps([{"id": i, "check": c, "detail": d} for i, c, d in findings],
+                         ensure_ascii=False, indent=1))
+    else:
+        for nid, check, detail in findings:
+            print(f"{check:>14}  {nid}\n                {detail}")
+        print(f"\n{len(findings)} finding(s)")
+    sys.exit(1 if findings else 0)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--root", default=".claude/knowledge/entries",
+                   help="entries root directory (default: %(default)s)")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("stats")
+    n = sub.add_parser("neighborhood")
+    n.add_argument("entry")
+    n.add_argument("--depth", type=int, default=1)
+    pa = sub.add_parser("path")
+    pa.add_argument("a")
+    pa.add_argument("b")
+    li = sub.add_parser("lint")
+    li.add_argument("files", nargs="*",
+                    help="limit findings to these files (e.g. staged entries)")
+    li.add_argument("--registry", default=None,
+                    help="tag registry markdown (default: <root>/../CLAUDE.md)")
+    args = p.parse_args()
+
+    nodes, edges, problems = load_graph(args.root)
+    if not nodes:
+        sys.exit(f"error: no entries under {args.root}")
+
+    if args.cmd == "stats":
+        cmd_stats(nodes, edges, args.json)
+    elif args.cmd == "neighborhood":
+        cmd_neighborhood(nodes, edges, resolve_entry(nodes, args.entry), args.depth, args.json)
+    elif args.cmd == "path":
+        cmd_path(nodes, edges, resolve_entry(nodes, args.a), resolve_entry(nodes, args.b), args.json)
+    elif args.cmd == "lint":
+        registry = args.registry or os.path.join(args.root, "..", "CLAUDE.md")
+        cmd_lint(nodes, edges, problems, registry, args.files, args.json)
+
+
+if __name__ == "__main__":
+    main()

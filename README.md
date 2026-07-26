@@ -123,6 +123,19 @@ For meaning-based search (synonyms, or a Japanese query against English identifi
 the `see:`-link graph — and falls back to ripgrep when the index is absent. Setup:
 [docs/hybrid-search.md](docs/hybrid-search.md).
 
+For multi-hop questions ("how did this decision evolve", "how do X and Y connect"),
+`scripts/kb_graph.py` queries the `see:`-link graph directly — `stats`, `neighborhood`,
+`path`, and a deterministic `lint` (pre-commit friendly). Pure stdlib, no index: the
+graph is built on demand from the entries, and output is structure only (IDs, titles,
+edge kinds — no body text), so you read only the entries the structure points at.
+
+```bash
+python3 scripts/kb_graph.py stats                    # hubs, orphans, components
+python3 scripts/kb_graph.py neighborhood <entry> --depth 2
+python3 scripts/kb_graph.py path <entry-a> <entry-b> # shortest link path
+python3 scripts/kb_graph.py lint                     # exit 1 on findings
+```
+
 ### Reviewing knowledge
 
 `/review-knowledge` keeps the base healthy in three modes:
