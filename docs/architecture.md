@@ -3,6 +3,35 @@
 How ccmemo works under the hood. You don't need any of this to use the skills —
 it's here for contributors and anyone curious about the design.
 
+## Scripts & Skill Wiring
+
+Three scripts under `scripts/` back the search and review skills:
+
+| Script | Runtime | Role | Since |
+|--------|---------|------|-------|
+| `kb_index.py` | `uv` (fastembed, sqlite-vec) | Build/refresh the per-machine vector index (sha256 incremental, idempotent) | v1.11.0 |
+| `kb_search.py` | `uv` (fastembed, sqlite-vec) | Hybrid query: lexical + vector arms, RRF fusion, `see:` 1-hop expansion, frontmatter filters | v1.11.0 |
+| `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / deterministic `lint` | v1.15.0 |
+
+How the skills reach them:
+
+- **`/recall-knowledge`** runs `kb_search.py` from the *main* agent's Bash
+  (subagents run in a sandbox that blocks code execution), falling back to
+  ripgrep-only when the index or its dependencies are absent, and pointing at
+  `kb_index.py` when advising an index build. Multi-hop recalls query
+  `kb_graph.py neighborhood` / `path` first and read only the endpoint
+  entries. Details: [hybrid-search.md](hybrid-search.md),
+  [link-graph.md](link-graph.md).
+- **`/review-knowledge`** has the main agent precompute `kb_graph.py stats` +
+  `lint` (deterministic, ~1s, no index needed) and pass the output to the
+  review subagent, which spends its effort on judgment work (staleness,
+  missing connections, synthesis) instead of re-deriving link facts by hand.
+  Falls back to the previous read-everything behaviour when `python3` is
+  unavailable.
+- The per-prompt `UserPromptSubmit` hook stays **ripgrep-only** (instant,
+  model-free injection) — neither the vector index nor the graph CLI is wired
+  into it.
+
 ## Subagent Delegation (since v1.8.0)
 
 Both `record-knowledge` and `plan-task` delegate their execution to a Sonnet
