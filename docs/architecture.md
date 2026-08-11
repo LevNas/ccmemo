@@ -95,6 +95,31 @@ worktree. Detection matches only the harness naming convention, so user-named
 worktrees keep capturing. Set `CCMEMO_CAPTURE_AGENT_WORKTREES=1` to opt out of
 the suppression.
 
+### Task mirroring for worktrees (issue-centric mode)
+
+In issue-centric mode `.claude/tasks/` is gitignored, so linked worktrees have
+no transport for task files: gitignored files are not checked out into a new
+worktree, and files written inside one die with it.
+
+- **Outbound (worktree → main checkout):** a SessionEnd hook
+  (`sessionend_tasks_mirror.py`) mirrors `.claude/tasks/` back to the main
+  checkout when the session ran inside a linked worktree. Copy-only — nothing
+  is deleted or overwritten; byte-identical targets are skipped, and a
+  differing existing target gets the copy written alongside as
+  `<name>-from-<worktree-basename><ext>`. The hook no-ops in git-tracked mode
+  (commits are the transport there), in harness-generated agent worktrees,
+  and outside worktrees. Opt-out: `CCMEMO_TASKS_MIRROR=0`.
+- **Inbound (main checkout → worktree):** list the directory in the
+  repository's `.worktreeinclude` file — Claude Code copies the listed
+  gitignored files into worktrees it creates:
+
+  ```
+  .claude/tasks/**
+  ```
+
+  Caveat: `.worktreeinclude` applies only to worktrees the harness creates,
+  not to worktrees made by external scripts with plain `git worktree add`.
+
 ### Checkpoint lifecycle
 
 Checkpoints saved by the PreCompact hook are consumed by `/plan-task` on the next

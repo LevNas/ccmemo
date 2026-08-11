@@ -38,6 +38,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/sessionend_tasks_mirror.py\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/sessionend_autocommit.py\"",
             "timeout": 30
           }
