@@ -7,11 +7,5 @@
   },
   "repository": "https://github.com/LevNas/ccmemo",
   "license": "MIT",
-  "keywords": [
-    "knowledge",
-    "memory",
-    "planning",
-    "tasks",
-    "persistence"
-  ]
+  "keywords": ["knowledge", "memory", "planning", "tasks", "persistence"]
 }
