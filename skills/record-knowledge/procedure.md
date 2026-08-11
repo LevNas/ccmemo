@@ -145,5 +145,16 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
    e. **Prepare links**: For each related entry, draft a `- see:` line with a brief relationship description
 5. Create `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` (or edit existing entry) — include the see links drafted in step 4
 6. **Tag registry update (mandatory)**: If a new tag was created, add it to the tag registry in `.claude/knowledge/CLAUDE.md` within the same operation
-7. **Add backlinks**: For each entry linked in step 4, edit that entry to add a reciprocal `- see:` link pointing back to the new entry
+7. **Add backlinks (deterministic)**: For each entry linked in step 4, add the reciprocal link with the bundled CLI instead of editing files by hand:
+
+   ```bash
+   python3 "<plugin_root>/scripts/kb_graph.py" --root .claude/knowledge/entries \
+     link-add <related-entry-filename> <new-entry-filename> \
+     --reason "<reverse relationship description>"
+   ```
+
+   - `<plugin_root>` is the plugin base directory — the parent of `skills/`, i.e. the directory containing this procedure file two levels up. It is shown in the skill loading message as "Base directory for this skill"
+   - Entries are addressed by unique filename substring; run from the project root so `--root` resolves
+   - The command is idempotent (an existing link to the same target is skipped) and appends after the entry's last `see:`/`ref:` line or its `## 関連` heading
+   - **Fallback**: if it exits non-zero (no see-block anchor, ambiguous name, missing frontmatter title), edit that one entry manually as before
 8. Return a summary of what was recorded: filename, `#` heading, `##` headings, and linked entries

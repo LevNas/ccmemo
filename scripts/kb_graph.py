@@ -9,6 +9,7 @@ Subcommands:
   stats                  graph overview: hubs, orphans, components
   neighborhood <entry>   BFS neighborhood (structure only, no body text)
   path <a> <b>           shortest link path between two entries
+  link-add <src> <dst>   deterministically append a see:/ref: line to src
   lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings)
 
 Output contains entry IDs, titles and edge types only — never body text —
@@ -23,7 +24,17 @@ Usage (from the project root):
     python3 scripts/kb_graph.py stats
     python3 scripts/kb_graph.py neighborhood <partial-name> --depth 2
     python3 scripts/kb_graph.py path <partial-name-a> <partial-name-b>
+    python3 scripts/kb_graph.py link-add <partial-a> <partial-b> \
+        --reason "relationship" --bidirectional
     python3 scripts/kb_graph.py lint [changed-files...]
+
+link-add is the writer counterpart of the graph reader: the model decides
+WHICH entries to connect and writes the reason; the mechanical edit is
+deterministic. It appends after the entry's last see:/ref: line (or after a
+`## 関連` heading), is idempotent per target, writes atomically, and exits
+non-zero on any ambiguity so the caller can fall back to a manual edit.
+With --bidirectional both directions are validated before either file is
+written (no partial application).
 
 Entries are addressed by unique filename substring. `--json` gives
 machine-readable output. `--root` points at the entries dir
@@ -39,6 +50,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections import deque
 
 LINK_RE = re.compile(r"^\s*-\s+(see|ref):\s*\[([^\]]*)\]\(([^)]+)\)", re.MULTILINE)
@@ -297,6 +309,104 @@ def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json):
     sys.exit(1 if findings else 0)
 
 
+SEE_SECTION_RE = re.compile(r"^##\s*(関連|Related)\s*$", re.MULTILINE)
+
+
+def _resolved_link_targets(text, root, dirpath):
+    """Resolve every see/ref target in text to an entries-root-relative id."""
+    targets = set()
+    for _kind, _label, target in LINK_RE.findall(text):
+        t = target.split("#")[0].strip()
+        if not t or t.startswith(("http://", "https://")):
+            continue
+        cand_root = os.path.normpath(os.path.join(root, t))
+        cand_file = os.path.normpath(os.path.join(dirpath, t))
+        for cand in (cand_root, cand_file):
+            if os.path.exists(cand) and cand.startswith(root + os.sep):
+                targets.add(os.path.relpath(cand, root))
+                break
+    return targets
+
+
+def plan_link(root, nodes, src, dst, kind, reason):
+    """Validate and prepare one src -> dst link insertion.
+
+    Returns None when src already links dst (idempotent skip), else
+    (path, new_text, line). Exits non-zero on any ambiguity — the caller
+    (usually a model) then falls back to a manual edit.
+    """
+    root = os.path.abspath(root)
+    if src == dst:
+        sys.exit("error: refusing to add a self-link")
+    title = nodes[dst]["title"]
+    if not title:
+        sys.exit(f"error: link target has no frontmatter title: {dst}")
+    path = os.path.join(root, src)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    if dst in _resolved_link_targets(text, root, os.path.dirname(path)):
+        print(f"already linked: {src} -> {dst}")
+        return None
+
+    # Anchor: after the last existing see/ref line, else after a 関連 heading.
+    matches = list(LINK_RE.finditer(text))
+    if matches:
+        end = text.find("\n", matches[-1].start())
+        insert_at = len(text) if end == -1 else end + 1
+    else:
+        m = SEE_SECTION_RE.search(text)
+        if not m:
+            sys.exit(f"error: no see/ref line and no '## 関連' section in {src}; "
+                     "add the first link manually")
+        insert_at = text.find("\n", m.start()) + 1
+        if text[insert_at:insert_at + 1] == "\n":
+            insert_at += 1  # keep the blank line under the heading
+
+    line = f"- {kind}: [{title}]({dst}) — {reason}\n"
+    prefix = text[:insert_at]
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    new_text = prefix + line + text[insert_at:]
+    return path, new_text, line
+
+
+def _write_atomic(path, new_text):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def cmd_link_add(root, nodes, args):
+    src = resolve_entry(nodes, args.src)
+    dst = resolve_entry(nodes, args.dst)
+    pairs = [(src, dst, args.reason)]
+    if args.bidirectional:
+        pairs.append((dst, src, args.reverse_reason or args.reason))
+
+    # Validate every direction before writing anything: a bidirectional
+    # request either fully applies or fully fails.
+    plans = []
+    for s, d, reason in pairs:
+        plan = plan_link(root, nodes, s, d, args.kind, reason)
+        if plan:
+            plans.append((s, d) + plan)
+
+    for s, d, path, new_text, line in plans:
+        if args.dry_run:
+            print(f"dry-run: would add to {s}:\n  {line}", end="")
+        else:
+            _write_atomic(path, new_text)
+            print(f"linked: {s} -> {d}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--root", default=".claude/knowledge/entries",
@@ -310,6 +420,18 @@ def main():
     pa = sub.add_parser("path")
     pa.add_argument("a")
     pa.add_argument("b")
+    la = sub.add_parser("link-add")
+    la.add_argument("src", help="entry to edit (unique filename substring)")
+    la.add_argument("dst", help="entry the new link points at")
+    la.add_argument("--reason", required=True,
+                    help="relationship description appended after the em dash")
+    la.add_argument("--kind", choices=["see", "ref"], default="see")
+    la.add_argument("--bidirectional", action="store_true",
+                    help="also add the reverse link dst -> src")
+    la.add_argument("--reverse-reason", default=None,
+                    help="reason for the reverse link (default: --reason)")
+    la.add_argument("--dry-run", action="store_true",
+                    help="print planned insertions without writing")
     li = sub.add_parser("lint")
     li.add_argument("files", nargs="*",
                     help="limit findings to these files (e.g. staged entries)")
@@ -327,6 +449,8 @@ def main():
         cmd_neighborhood(nodes, edges, resolve_entry(nodes, args.entry), args.depth, args.json)
     elif args.cmd == "path":
         cmd_path(nodes, edges, resolve_entry(nodes, args.a), resolve_entry(nodes, args.b), args.json)
+    elif args.cmd == "link-add":
+        cmd_link_add(args.root, nodes, args)
     elif args.cmd == "lint":
         registry = args.registry or os.path.join(args.root, "..", "CLAUDE.md")
         cmd_lint(nodes, edges, problems, registry, args.files, args.json)
