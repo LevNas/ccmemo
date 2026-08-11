@@ -1,11 +1,17 @@
 {
   "name": "ccmemo",
   "description": "Persist knowledge and plans across Claude Code sessions. Provides /record-knowledge, /plan-task, /review-knowledge, and /recall-knowledge skills.",
-  "version": "1.15.0",
+  "version": "1.15.1",
   "author": {
     "name": "LevNas"
   },
   "repository": "https://github.com/LevNas/ccmemo",
   "license": "MIT",
-  "keywords": ["knowledge", "memory", "planning", "tasks", "persistence"]
+  "keywords": [
+    "knowledge",
+    "memory",
+    "planning",
+    "tasks",
+    "persistence"
+  ]
 }
