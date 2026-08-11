@@ -19,6 +19,11 @@ recall loop. The condensed version of this page is the README
 
 - [Claude Code](https://code.claude.com/docs/en/overview) CLI
 - `git` — entries are plain Markdown committed to your repositories
+- `rg` ([ripgrep](https://github.com/BurntSushi/ripgrep)), `jq`, and
+  [`mecab`](https://taku910.github.io/mecab/) — the hook that auto-surfaces
+  relevant entries on every prompt needs all three on `PATH` and **silently
+  does nothing** when one is missing; `rg` also backs `/recall-knowledge`'s
+  index-free fallback
 - Optional: `python3` for the link-graph CLI (opt-in)
 - Optional: [`uv`](https://docs.astral.sh/uv/) for semantic search (opt-in;
   the simplest runner — `python3` + pip works too, see Step 5)

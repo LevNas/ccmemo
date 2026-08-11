@@ -16,6 +16,7 @@
 
 - [Claude Code](https://code.claude.com/docs/en/overview) CLI
 - `git`（エントリは Markdown ファイルとしてリポジトリにコミットします）
+- `rg`（[ripgrep](https://github.com/BurntSushi/ripgrep)）と `jq` と [`mecab`](https://taku910.github.io/mecab/): 毎プロンプトで関連エントリを自動提示するフックは、3つすべてが `PATH` にあるときだけ動きます（欠けていると**黙って何もしません**）。`rg` は `/recall-knowledge` の索引なしフォールバックの土台でもあります
 - 任意: `python3`（リンクグラフ CLI 用。オプトイン）
 - 任意: [`uv`](https://docs.astral.sh/uv/)（意味検索用の最短ランナー。オプトインで、`python3` + pip でも代替可。手順5参照）
 - 任意: [ghq](https://github.com/x-motemen/ghq)（後述のクローン配置を自動化）
