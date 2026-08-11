@@ -53,7 +53,7 @@ Claude Code is not just a coding assistant — it also serves as a "thinking par
 
 ## ナレッジ記録ルール
 
-エントリの置き場所と、「1エントリ1ファイル、編集はインプレース、履歴は git に任せる」という運用を宣言します。
+エントリの置き場所と、「1エントリ1ファイル、既存エントリは直接編集し、履歴は git に任せる」という運用を宣言します。
 
 ```markdown
 ## Knowledge Recording

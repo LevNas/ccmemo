@@ -28,9 +28,9 @@ your-project/.claude/
 
 フック（Context Guard）はプラグイン経由で配線されるため、手動コピーの場合に使いたければ `hooks/hooks.json` のエントリを自分で追加します。
 
-### シェルでのスキャフォールド（プラグインインストール時）
+### シェルでの scaffold（プラグインインストール時）
 
-マーケットプレイス経由でインストール済みで、Claude Code に頼む代わりにシェルコマンドでスキャフォールドしたい場合は、プロジェクトルートで実行します。
+マーケットプレイス経由でインストール済みで、Claude Code に頼む代わりにシェルコマンドで scaffold したい場合は、プロジェクトルートで実行します。
 
 ```bash
 tpl=$(find ~/.claude/plugins/cache -type d -path '*ccmemo*/templates' | sort | tail -1)
