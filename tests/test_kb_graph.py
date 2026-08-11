@@ -193,6 +193,119 @@ def test_cli_lint_clean_exits_zero():
         assert res.returncode == 0, (res.stdout, res.stderr)
 
 
+ENTRY_E = "2026/07/20260703-120000-alice-section-only-e.md"
+
+
+def add_entry_e(root):
+    """Entry with a 関連 section but no links yet (heading anchor case)."""
+    path = os.path.join(root, ENTRY_E)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("""---
+title: Section Only E
+created: 2026-07-03
+status: active
+tags: "#pitfall"
+---
+
+Body E.
+
+## 関連
+
+""")
+    return path
+
+
+def read(root, rel):
+    with open(os.path.join(root, rel), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_link_add_appends_after_last_link_and_is_idempotent():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        res = run_cli(root, "link-add", "topic-b", "orphan-c",
+                      "--reason", "test relation")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        text = read(root, ENTRY_B)
+        line = f"- see: [Orphan C]({ENTRY_C}) — test relation"
+        assert line in text, text
+        # appended directly after the previous last link line
+        assert text.index(line) > text.index("self link on purpose"), text
+        # idempotent rerun: no duplicate, exit 0
+        res = run_cli(root, "link-add", "topic-b", "orphan-c",
+                      "--reason", "test relation")
+        assert res.returncode == 0 and "already linked" in res.stdout, res.stdout
+        assert read(root, ENTRY_B).count(f"({ENTRY_C})") == 1
+
+
+def test_link_add_uses_section_heading_anchor():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        add_entry_e(root)
+        res = run_cli(root, "link-add", "section-only-e", "topic-a",
+                      "--reason", "via heading")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        text = read(root, ENTRY_E)
+        assert f"## 関連\n\n- see: [Topic A]({ENTRY_A}) — via heading" in text, text
+
+
+def test_link_add_fails_loudly_without_anchor():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        before = read(root, ENTRY_C)
+        res = run_cli(root, "link-add", "orphan-c", "topic-a", "--reason", "x")
+        assert res.returncode != 0, "no anchor must fail"
+        assert "manually" in res.stderr, res.stderr
+        assert read(root, ENTRY_C) == before, "file must be untouched"
+
+
+def test_link_add_bidirectional_validates_before_writing():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        before_a = read(root, ENTRY_A)
+        # reverse direction (orphan-c) has no anchor -> nothing may be written
+        res = run_cli(root, "link-add", "topic-a", "orphan-c",
+                      "--reason", "x", "--bidirectional")
+        assert res.returncode != 0, "must fail on the reverse leg"
+        assert read(root, ENTRY_A) == before_a, "no partial application"
+        # both legs valid -> both written
+        add_entry_e(root)
+        res = run_cli(root, "link-add", "topic-a", "section-only-e",
+                      "--reason", "fwd", "--reverse-reason", "back",
+                      "--bidirectional")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        assert f"({ENTRY_E}) — fwd" in read(root, ENTRY_A)
+        assert f"({ENTRY_A}) — back" in read(root, ENTRY_E)
+
+
+def test_link_add_dry_run_and_bad_targets():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        before = read(root, ENTRY_B)
+        res = run_cli(root, "link-add", "topic-b", "orphan-c",
+                      "--reason", "x", "--dry-run")
+        assert res.returncode == 0 and "dry-run" in res.stdout, res.stdout
+        assert read(root, ENTRY_B) == before, "dry-run must not write"
+        # target without a frontmatter title
+        res = run_cli(root, "link-add", "topic-b", "notes", "--reason", "x")
+        assert res.returncode != 0 and "title" in res.stderr, res.stderr
+        # self link
+        res = run_cli(root, "link-add", "topic-b", "topic-b", "--reason", "x")
+        assert res.returncode != 0 and "self-link" in res.stderr, res.stderr
+
+
+def test_link_add_result_passes_lint():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        add_entry_e(root)
+        res = run_cli(root, "link-add", "section-only-e", "orphan-c",
+                      "--reason", "clean link")
+        assert res.returncode == 0, res.stderr
+        # the new line must parse as a real edge (E -> C appears in the graph)
+        nodes, edges, _problems = kb_graph.load_graph(root)
+        assert (ENTRY_E, ENTRY_C) in {(s, d) for s, d, _k, _r in edges}, edges
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
