@@ -16,7 +16,8 @@
 
 - [Claude Code](https://code.claude.com/docs/en/overview) CLI
 - `git`（エントリは Markdown ファイルとしてリポジトリにコミットします）
-- 任意: `python3`（リンクグラフ CLI とセマンティック検索に使用。どちらもオプトイン）
+- 任意: `python3`（リンクグラフ CLI 用。オプトイン）
+- 任意: [`uv`](https://docs.astral.sh/uv/)（意味検索用の最短ランナー。オプトインで、`python3` + pip でも代替可。手順5参照）
 - 任意: [ghq](https://github.com/x-motemen/ghq)（後述のクローン配置を自動化）
 
 ## 手順1: リポジトリを配置する
@@ -118,10 +119,37 @@ claude plugin install ccmemo@levnas-plugins --scope user
 この「記録して、コミットして、呼び出す」のループが ccmemo の中核です。
 他の機能はすべて、このループの効きを高めるためにあります。
 
+## 手順5（任意）: 意味検索を有効にする
+
+`/recall-knowledge` は準備なしでも ripgrep のみのモードで動作します。
+意味での検索（同義語や、英語の識別子に対する日本語クエリ）まで使うには、マシンごとに一度、ローカルのベクトル索引を構築します。
+
+```bash
+# 派生キャッシュである索引を git 対象外にする（リポジトリごとに一度）
+echo '.claude/knowledge/.index/' >> .gitignore
+
+# 索引を構築する。依存（fastembed + sqlite-vec）は uv が一時環境へ自動導入し、
+# 埋め込みモデルは初回実行時に一度だけダウンロードされる。処理は完全に
+# ローカルで、ナレッジ本文が外部へ送られることはない。
+scripts=$(find ~/.claude/plugins/cache -type d -path '*ccmemo*/scripts' | sort | tail -1)
+uv run "$scripts/kb_index.py" .claude/knowledge/entries/
+```
+
+クエリを1本投げて動作確認します。
+
+```bash
+uv run "$scripts/kb_search.py" .claude/knowledge/entries/ "探したい内容"
+```
+
+これ以降、`/recall-knowledge` は索引を自動で使います。
+索引はマシンごとの派生キャッシュです。再実行は差分のみを埋め込み直し、検索時にも変更分が遅延更新され、いつでも作り直せます。
+`uv` を使わない場合は `pip install 'fastembed>=0.3' 'sqlite-vec>=0.1.6'` と `python3` でも動きます。
+その手順、チーム運用で `git pull` 後に索引を追随させる post-merge フック、NixOS での注意は [hybrid-search.md](hybrid-search.md)（英語）にあります。
+
 ## 次に読むもの
 
 - [usage.ja.md](usage.ja.md): エントリの検索、ナレッジベースのレビュー、プランとタスク、カスタマイズ
-- [hybrid-search.md](hybrid-search.md): `/recall-knowledge` のセマンティック検索（オプトイン。初回のみ索引構築）
+- [hybrid-search.md](hybrid-search.md): 意味検索の詳細（検索パイプラインとフィルタ、pip 経路、post-merge での索引追随、NixOS）
 - [link-graph.md](link-graph.md): `see:` リンクグラフの構造クエリ（ハブ、孤立エントリ、最短経路）
 - [claude-md-examples.ja.md](claude-md-examples.ja.md): プロジェクトの CLAUDE.md への組み込みパターン
 

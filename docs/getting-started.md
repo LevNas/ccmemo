@@ -19,7 +19,9 @@ recall loop. The condensed version of this page is the README
 
 - [Claude Code](https://code.claude.com/docs/en/overview) CLI
 - `git` — entries are plain Markdown committed to your repositories
-- Optional: `python3` for the link-graph CLI and semantic search (both opt-in)
+- Optional: `python3` for the link-graph CLI (opt-in)
+- Optional: [`uv`](https://docs.astral.sh/uv/) for semantic search (opt-in;
+  the simplest runner — `python3` + pip works too, see Step 5)
 - Optional: [ghq](https://github.com/x-motemen/ghq) for the clone layout below
 
 ## Step 1 — Lay out your repositories
@@ -132,12 +134,42 @@ Prefer a shell command over asking? See
 That loop — record, commit, recall — is the whole core of ccmemo. Everything
 else is leverage on top of it.
 
+## Step 5 (optional) — Enable semantic search
+
+`/recall-knowledge` works without any setup, in ripgrep-only mode. To add
+meaning-based retrieval — synonyms, or a Japanese query against English
+identifiers — build the local vector index once per machine:
+
+```bash
+# Keep the derived index out of git (once per repository)
+echo '.claude/knowledge/.index/' >> .gitignore
+
+# Build the index. uv installs the dependencies (fastembed + sqlite-vec)
+# into an ephemeral env, and the embedding model downloads on first run.
+# Everything runs locally — knowledge text never leaves the machine.
+scripts=$(find ~/.claude/plugins/cache -type d -path '*ccmemo*/scripts' | sort | tail -1)
+uv run "$scripts/kb_index.py" .claude/knowledge/entries/
+```
+
+Verify with a query:
+
+```bash
+uv run "$scripts/kb_search.py" .claude/knowledge/entries/ "your query"
+```
+
+From here `/recall-knowledge` uses the index automatically. The index is a
+per-machine derived cache: re-runs are incremental, searches refresh changed
+entries lazily, and it can be regenerated at any time. Prefer plain Python?
+`pip install 'fastembed>=0.3' 'sqlite-vec>=0.1.6'` + `python3` works too —
+that path, the post-merge re-index hook for teams, and the NixOS note are in
+[hybrid-search.md](hybrid-search.md).
+
 ## Going further
 
 - [usage.md](usage.md) — searching entries, reviewing the base, plans & tasks,
   customization
-- [hybrid-search.md](hybrid-search.md) — opt-in semantic search for
-  `/recall-knowledge` (one-time index build)
+- [hybrid-search.md](hybrid-search.md) — semantic search in depth: the search
+  pipeline and filters, the pip path, post-merge re-indexing, NixOS
 - [link-graph.md](link-graph.md) — structural queries over the `see:`-link
   graph: hubs, orphans, shortest paths
 - [claude-md-examples.md](claude-md-examples.md) — wiring ccmemo conventions
