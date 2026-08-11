@@ -88,6 +88,13 @@ Answer "不要" to skip.
 to `.claude/context-checkpoints/` with modified file paths and user decisions extracted
 from the transcript tail.
 
+**Agent worktrees:** Stages 1 and 3 skip capture when the session runs inside a
+harness-generated agent isolation worktree (`.claude/worktrees/agent-<hex>` or
+`wf_<runId>-<n>`) — captures written there are misattributed and die with the
+worktree. Detection matches only the harness naming convention, so user-named
+worktrees keep capturing. Set `CCMEMO_CAPTURE_AGENT_WORKTREES=1` to opt out of
+the suppression.
+
 ### Checkpoint lifecycle
 
 Checkpoints saved by the PreCompact hook are consumed by `/plan-task` on the next
