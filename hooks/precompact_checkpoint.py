@@ -18,6 +18,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import autocommit  # noqa: E402
+from lib.agent_worktree import capture_suppressed  # noqa: E402
 
 
 def extract_modified_files(lines: list[str]) -> list[str]:
@@ -223,6 +224,12 @@ def main() -> None:
     session_id = input_data.get("session_id", "unknown")
     trigger = input_data.get("trigger", "auto")
     cwd = input_data.get("cwd", os.getcwd())
+
+    # Skip entirely inside harness-generated agent worktrees (issue #17):
+    # checkpoint, session_state, and the safety-net commit would all land
+    # in the ephemeral worktree / agent branch and be misattributed.
+    if capture_suppressed(cwd):
+        return
 
     # Opt-in safety-net commit of knowledge/tasks (shared with the SessionEnd
     # hook). Runs independently of whether there is a transcript to checkpoint.

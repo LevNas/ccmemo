@@ -15,6 +15,9 @@ import re
 import sys
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.agent_worktree import capture_suppressed  # noqa: E402
+
 
 def find_active_task_dir(cwd: str) -> str | None:
     """Find the first active task directory from .claude/tasks/readme.md."""
@@ -135,6 +138,11 @@ def main() -> None:
 
     tool_input = input_data.get("tool_input", {})
     cwd = input_data.get("cwd", os.getcwd())
+
+    # Skip capture inside harness-generated agent worktrees (issue #17):
+    # captures there are misattributed and die with the worktree.
+    if capture_suppressed(cwd):
+        return
 
     # Find active task
     task_dir = find_active_task_dir(cwd)
