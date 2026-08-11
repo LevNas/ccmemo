@@ -49,6 +49,8 @@ for tasks. Easiest is to just ask Claude Code:
 Claude writes a Markdown entry under `.claude/knowledge/entries/`. Commit it, and
 your next session (or a teammate's) finds it automatically.
 
+A step-by-step version of this Quick start — repository layout, user-scope
+install, team enablement — is [docs/getting-started.md](docs/getting-started.md).
 Installing without the marketplace and scaffolding by shell command are covered
 in [docs/usage.md](docs/usage.md). Semantic search via `/recall-knowledge` is
 opt-in (one-time index build) — see [docs/hybrid-search.md](docs/hybrid-search.md).
@@ -92,8 +94,12 @@ All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md
 
 ## Documentation
 
+- [docs/getting-started.md](docs/getting-started.md) — zero-to-first-recall
+  walkthrough: repository layout (ghq), user-scope install, scaffolding, and
+  scaling up with ccorch ([日本語](docs/getting-started.ja.md))
 - [docs/usage.md](docs/usage.md) — day-to-day usage: searching entries, reviewing
   the base, plans & tasks, customization, manual install
+  ([日本語](docs/usage.ja.md))
 - [docs/hybrid-search.md](docs/hybrid-search.md) — semantic search setup &
   verification (incl. corporate TLS and NixOS)
 - [docs/link-graph.md](docs/link-graph.md) — the link-graph CLI:
@@ -102,7 +108,7 @@ All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md
   delegation, Context Guard
 - [docs/examples.md](docs/examples.md) — personal & team workflow walkthroughs
 - [docs/claude-md-examples.md](docs/claude-md-examples.md) — CLAUDE.md integration
-  patterns
+  patterns ([日本語](docs/claude-md-examples.ja.md))
 
 ## Getting help
 
