@@ -1,5 +1,7 @@
 # Usage Guide
 
+> 日本語版: [usage.ja.md](usage.ja.md)
+
 Day-to-day workflows once ccmemo is installed, plus manual installation and
 customization. For the fastest install path, see the Quick start in the
 [README](../README.md).

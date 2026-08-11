@@ -1,5 +1,7 @@
 # CLAUDE.md Configuration Examples
 
+> 日本語版: [claude-md-examples.ja.md](claude-md-examples.ja.md)
+
 Practical examples of how to configure your project's `CLAUDE.md` to integrate ccmemo into Claude Code's workflow. Adapt the sections you need.
 
 ## Thinking Partner Declaration
