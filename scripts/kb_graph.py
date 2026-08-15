@@ -9,8 +9,16 @@ Subcommands:
   stats                  graph overview: hubs, orphans, components
   neighborhood <entry>   BFS neighborhood (structure only, no body text)
   path <a> <b>           shortest link path between two entries
-  link-add <src> <dst>   deterministically append a see:/ref: line to src
+  lineage <entry>        supersede chain: what this replaced, what replaced it
+  link-add <src> <dst>   deterministically append a typed link line to src
   lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings)
+
+Edge kinds:
+  see / ref              untyped association (list links, unchanged)
+  amends / extends       typed list links: correction note / elaboration
+  superseded_by          derived from the `superseded_by:` frontmatter field
+                         (correction flow) — old entry -> replacement, max one
+                         per entry, entries-root-relative path only
 
 Output contains entry IDs, titles and edge types only — never body text —
 so results stay cheap to inject into a model context. The intended flow is
@@ -53,7 +61,7 @@ import sys
 import tempfile
 from collections import deque
 
-LINK_RE = re.compile(r"^\s*-\s+(see|ref):\s*\[([^\]]*)\]\(([^)]+)\)", re.MULTILINE)
+LINK_RE = re.compile(r"^\s*-\s+(see|ref|amends|extends):\s*\[([^\]]*)\]\(([^)]+)\)", re.MULTILINE)
 # Both registry line forms in use: "- #tag — description (count)" and "`#tag`"
 TAG_REGISTRY_RES = (
     re.compile(r"^- (#[\w\-]+)", re.MULTILINE),
@@ -103,6 +111,27 @@ def load_graph(root):
                 problems.append((nid, "missing-title", "no frontmatter title"))
             if not FILENAME_RE.match(fn):
                 problems.append((nid, "filename", "does not match <date>-<time>-...-<slug>.md"))
+            sup = meta.get("superseded_by", "")
+            status = meta.get("status", "")
+            if sup:
+                if status != "superseded":
+                    problems.append((nid, "superseded-status-mismatch",
+                                     f"superseded_by present but status is '{status or '(none)'}'"))
+                t = sup.split("#")[0].strip()
+                # spec says entries-root-relative — deliberately no dirpath fallback
+                cand = os.path.normpath(os.path.join(root, t))
+                if os.path.exists(cand) and cand.startswith(root + os.sep):
+                    dst = os.path.relpath(cand, root)
+                    if dst == nid:
+                        problems.append((nid, "self-link", "superseded_by: links to itself"))
+                    else:
+                        edges.append((nid, dst, "superseded_by", "frontmatter"))
+                else:
+                    problems.append((nid, "superseded-broken",
+                                     f"superseded_by: ({sup}) resolves to no entry"))
+            elif status == "superseded":
+                problems.append((nid, "superseded-missing-successor",
+                                 "status: superseded but no superseded_by"))
             for kind, _label, target in LINK_RE.findall(text):
                 t = target.split("#")[0].strip()
                 if not t or t.startswith(("http://", "https://")):
@@ -282,8 +311,77 @@ def cmd_path(nodes, edges, a, b, as_json):
     print(f"\n{len(chain)} hops")
 
 
+def supersede_maps(edges):
+    nxt, prevs = {}, {}
+    for s, d, k, _r in edges:
+        if k == "superseded_by":
+            nxt[s] = d  # max one superseded_by per entry -> chain structure
+            prevs.setdefault(d, []).append(s)
+    return nxt, prevs
+
+
+def supersede_cycles(edges):
+    nxt, _prevs = supersede_maps(edges)
+    cycles, done = [], set()
+    for start in nxt:
+        if start in done:
+            continue
+        order = {}
+        cur = start
+        while cur in nxt and cur not in order and cur not in done:
+            order[cur] = len(order)
+            cur = nxt[cur]
+        if cur in order:
+            chain = sorted(order, key=order.get)
+            cycles.append(chain[order[cur]:])
+        done.update(order)
+    return cycles
+
+
+def cmd_lineage(nodes, edges, start, as_json):
+    nxt, prevs = supersede_maps(edges)
+    ancestors = []  # entries this one (transitively) replaced
+    q = deque([start])
+    seen = {start}
+    while q:
+        for p in sorted(prevs.get(q.popleft(), [])):
+            if p not in seen:
+                seen.add(p)
+                ancestors.append(p)
+                q.append(p)
+    successors = []  # replacement chain from this entry forward
+    cur = start
+    while cur in nxt and nxt[cur] not in successors and nxt[cur] != start:
+        cur = nxt[cur]
+        successors.append(cur)
+    current = successors[-1] if successors else start
+    if as_json:
+        print(json.dumps({
+            "entry": start,
+            "ancestors": [{"id": n, "title": nodes[n]["title"]} for n in ancestors],
+            "successors": [{"id": n, "title": nodes[n]["title"]} for n in successors],
+            "current": {"id": current, "title": nodes[current]["title"],
+                        "status": nodes[current]["status"]},
+        }, ensure_ascii=False, indent=1))
+        return
+    print(f"{start}\n  {short(nodes[start]['title'])}")
+    if ancestors:
+        print("\nreplaces (transitively):")
+        for n in ancestors:
+            print(f"  ← {n}\n      {short(nodes[n]['title'])}")
+    if successors:
+        print("\nreplaced by (chain):")
+        for n in successors:
+            print(f"  → {n}\n      {short(nodes[n]['title'])}")
+    flag = "" if nodes[current]["status"] in ("active", "draft") else f"  [status: {nodes[current]['status']}]"
+    print(f"\ncurrent authority: {current}{flag}")
+
+
 def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json):
     findings = list(problems)
+    for cyc in supersede_cycles(edges):
+        for nid in cyc:  # one finding per member so the only_files filter still hits
+            findings.append((nid, "supersede-cycle", " → ".join(cyc + [cyc[0]])))
     if registry_path and os.path.isfile(registry_path):
         with open(registry_path, encoding="utf-8") as f:
             registry_text = f.read()
@@ -420,12 +518,14 @@ def main():
     pa = sub.add_parser("path")
     pa.add_argument("a")
     pa.add_argument("b")
+    lg = sub.add_parser("lineage")
+    lg.add_argument("entry")
     la = sub.add_parser("link-add")
     la.add_argument("src", help="entry to edit (unique filename substring)")
     la.add_argument("dst", help="entry the new link points at")
     la.add_argument("--reason", required=True,
                     help="relationship description appended after the em dash")
-    la.add_argument("--kind", choices=["see", "ref"], default="see")
+    la.add_argument("--kind", choices=["see", "ref", "amends", "extends"], default="see")
     la.add_argument("--bidirectional", action="store_true",
                     help="also add the reverse link dst -> src")
     la.add_argument("--reverse-reason", default=None,
@@ -449,6 +549,8 @@ def main():
         cmd_neighborhood(nodes, edges, resolve_entry(nodes, args.entry), args.depth, args.json)
     elif args.cmd == "path":
         cmd_path(nodes, edges, resolve_entry(nodes, args.a), resolve_entry(nodes, args.b), args.json)
+    elif args.cmd == "lineage":
+        cmd_lineage(nodes, edges, resolve_entry(nodes, args.entry), args.json)
     elif args.cmd == "link-add":
         cmd_link_add(args.root, nodes, args)
     elif args.cmd == "lint":

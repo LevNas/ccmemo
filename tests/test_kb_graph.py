@@ -306,6 +306,125 @@ def test_link_add_result_passes_lint():
         assert (ENTRY_E, ENTRY_C) in {(s, d) for s, d, _k, _r in edges}, edges
 
 
+LIN_A = "2026/08/20260801-100000-alice-design-old.md"
+LIN_B = "2026/08/20260802-100000-alice-design-mid.md"
+LIN_C = "2026/08/20260803-100000-alice-design-current.md"
+LIN_D = "2026/08/20260804-100000-alice-mismatch.md"
+LIN_E = "2026/08/20260805-100000-alice-no-successor.md"
+LIN_G = "2026/08/20260806-100000-alice-cycle-g.md"
+LIN_H = "2026/08/20260807-100000-alice-cycle-h.md"
+
+
+def make_lineage_kb(base):
+    """Supersede chain A→B→C plus every supersede lint defect: status
+    mismatch and broken target (both on D), missing successor (E), and a
+    two-entry cycle (G⇄H). C carries an amends link, E an extends link."""
+    root = os.path.join(base, "repo", ".claude", "knowledge", "entries")
+    os.makedirs(os.path.join(root, "2026", "08"))
+
+    def write(relpath, title, status, superseded_by=None, links=""):
+        lines = ["---", f"title: {title}", "created: 2026-08-01",
+                 f"status: {status}"]
+        if superseded_by:
+            lines.append(f"superseded_by: {superseded_by}")
+        lines += ['tags: "#design"', "---", "", f"Body of {title}.", ""]
+        with open(os.path.join(root, relpath), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + links)
+
+    write(LIN_A, "Design old", "superseded", superseded_by=LIN_B)
+    write(LIN_B, "Design mid", "superseded", superseded_by=LIN_C)
+    write(LIN_C, "Design current", "active",
+          links=f"- amends: [Design old]({LIN_A}) — corrects the original scope\n")
+    write(LIN_D, "Mismatch", "active", superseded_by="2026/08/nonexistent.md")
+    write(LIN_E, "No successor", "superseded",
+          links=f"- extends: [Design current]({LIN_C}) — elaborates the rollout\n")
+    write(LIN_G, "Cycle G", "superseded", superseded_by=LIN_H)
+    write(LIN_H, "Cycle H", "superseded", superseded_by=LIN_G)
+
+    with open(os.path.join(base, "repo", ".claude", "knowledge", "CLAUDE.md"),
+              "w", encoding="utf-8") as f:
+        f.write("- #design — design lineage fixtures (7)\n")
+    return root
+
+
+def test_typed_edges_and_superseded_frontmatter():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_lineage_kb(base)
+        nodes, edges, problems = kb_graph.load_graph(root)
+        kinds = {}
+        for _s, _d, k, _r in edges:
+            kinds[k] = kinds.get(k, 0) + 1
+        assert kinds == {"superseded_by": 4, "amends": 1, "extends": 1}, kinds
+        triples = {(s, d, k) for s, d, k, _r in edges}
+        assert (LIN_A, LIN_B, "superseded_by") in triples, triples
+        assert (LIN_C, LIN_A, "amends") in triples, triples
+        assert (LIN_E, LIN_C, "extends") in triples, triples
+        checks = {(nid, check) for nid, check, _ in problems}
+        assert (LIN_D, "superseded-status-mismatch") in checks, checks
+        assert (LIN_D, "superseded-broken") in checks, checks
+        assert (LIN_E, "superseded-missing-successor") in checks, checks
+        # D's broken superseded_by must not produce an edge
+        assert not any(s == LIN_D for s, _d, _k, _r in edges), edges
+
+
+def test_cli_lint_supersede_checks_and_cycle_scoping():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_lineage_kb(base)
+        res = run_cli(root, "--json", "lint")
+        assert res.returncode == 1, (res.stdout, res.stderr)
+        findings = json.loads(res.stdout)
+        by_check = {}
+        for f in findings:
+            by_check.setdefault(f["check"], []).append(f["id"])
+        assert by_check.get("superseded-status-mismatch") == [LIN_D], by_check
+        assert by_check.get("superseded-broken") == [LIN_D], by_check
+        assert by_check.get("superseded-missing-successor") == [LIN_E], by_check
+        assert by_check.get("supersede-cycle") == [LIN_G, LIN_H], by_check
+        assert len(findings) == 5, findings
+        # cycle findings are reported per member, so file scoping still hits
+        res = run_cli(root, "--json", "lint", os.path.join(root, LIN_G))
+        scoped = json.loads(res.stdout)
+        assert [(f["id"], f["check"]) for f in scoped] == \
+            [(LIN_G, "supersede-cycle")], scoped
+
+
+def test_cli_lineage():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_lineage_kb(base)
+        res = run_cli(root, "--json", "lineage", "design-old")
+        assert res.returncode == 0, res.stderr
+        data = json.loads(res.stdout)
+        assert [s["id"] for s in data["successors"]] == [LIN_B, LIN_C], data
+        assert data["current"]["id"] == LIN_C, data
+        assert data["current"]["status"] == "active", data
+        assert data["ancestors"] == [], data
+        # reverse direction: the current entry knows what it replaced
+        res = run_cli(root, "--json", "lineage", "design-current")
+        data = json.loads(res.stdout)
+        assert [a["id"] for a in data["ancestors"]] == [LIN_B, LIN_A], data
+        assert data["current"]["id"] == LIN_C, data
+        # text output is structure only — no body text may leak
+        res = run_cli(root, "lineage", "design-old")
+        assert res.returncode == 0 and "Body" not in res.stdout, res.stdout
+        assert "current authority" in res.stdout, res.stdout
+        # a supersede cycle must terminate, not hang
+        res = run_cli(root, "--json", "lineage", "cycle-g")
+        assert res.returncode == 0, res.stderr
+
+
+def test_link_add_typed_kind():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        res = run_cli(root, "link-add", "topic-b", "orphan-c",
+                      "--kind", "extends", "--reason", "builds on it")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        line = f"- extends: [Orphan C]({ENTRY_C}) — builds on it"
+        assert line in read(root, ENTRY_B), read(root, ENTRY_B)
+        nodes, edges, _problems = kb_graph.load_graph(root)
+        assert (ENTRY_B, ENTRY_C, "extends") in \
+            {(s, d, k) for s, d, k, _r in edges}, edges
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -88,6 +88,7 @@ go structure-first through the `see:`-link graph — pure stdlib, no index:
 ```bash
 python3 scripts/kb_graph.py stats                    # hubs, orphans, components
 python3 scripts/kb_graph.py path <entry-a> <entry-b> # shortest link path
+python3 scripts/kb_graph.py lineage <entry>          # supersede chain → current authority
 ```
 
 All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md).
@@ -103,7 +104,7 @@ All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md
 - [docs/hybrid-search.md](docs/hybrid-search.md) — semantic search setup &
   verification (incl. corporate TLS and NixOS)
 - [docs/link-graph.md](docs/link-graph.md) — the link-graph CLI:
-  `stats` / `neighborhood` / `path` / `lint`
+  `stats` / `neighborhood` / `path` / `lineage` / `link-add` / `lint`
 - [docs/architecture.md](docs/architecture.md) — scripts & skill wiring, subagent
   delegation, Context Guard
 - [docs/examples.md](docs/examples.md) — personal & team workflow walkthroughs

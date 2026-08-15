@@ -64,10 +64,15 @@ full body just to decide where to go next). Instead:
 ```bash
 python3 "{plugin_root}/scripts/kb_graph.py" --root "{KB_ROOT}" neighborhood <entry> --depth 2
 python3 "{plugin_root}/scripts/kb_graph.py" --root "{KB_ROOT}" path <entryA> <entryB>
+python3 "{plugin_root}/scripts/kb_graph.py" --root "{KB_ROOT}" lineage <entry>
 ```
 
 - Entries are addressed by unique filename substring; use Step 3a/3b (or `stats` for
   hubs) only to identify the starting entry when it is not already known.
+- Decision-evolution questions map directly to `lineage`: it prints what the entry
+  (transitively) replaced, the replacement chain forward, and the **current
+  authority** — derived from the `superseded_by:` frontmatter, one command instead
+  of hand-following links.
 - Output is structure only — IDs, titles, edge kinds, never body text — so it is cheap
   to keep in context. Plan the route from it, then **Read only the endpoint entries**
   (typically 1–3) that actually answer the question.
@@ -76,6 +81,9 @@ python3 "{plugin_root}/scripts/kb_graph.py" --root "{KB_ROOT}" path <entryA> <en
 ## Step 4. Present results
 - Show the ranked entries as printed by kb_search.py: score, title, relpath, tags, snippet.
 - For the top 1–2 hits, **Read** the entry file when its content is needed to answer.
-- Prefer `status: active`; if a top hit is `superseded`/`deprecated`, note it and prefer its
-  replacement (follow `superseded_by` / `see:` links).
+- Prefer `status: active`; if a top hit is `superseded`, run
+  `python3 "{plugin_root}/scripts/kb_graph.py" --root "{KB_ROOT}" lineage <entry>` to
+  jump to the current authority (the chain may be multi-step), answer from that entry,
+  and note the supersession. For `deprecated` hits, note it and prefer `see:`-linked
+  replacements.
 - Keep output concise — return the ranked list and the synthesized answer, not raw tool noise.
