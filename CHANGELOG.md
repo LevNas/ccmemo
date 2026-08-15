@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.17.0] - 2026-08-15
+
+### Added
+- **Typed edges (decision lineage)** in `scripts/kb_graph.py`: the graph now reads
+  the `superseded_by:` frontmatter field as a `superseded_by` edge (entries-root-relative,
+  the single source for supersede lineage — never duplicated as a list link), plus two
+  typed list links — `- amends:` (correction/addendum note that does not rise to a
+  replacement) and `- extends:` (elaboration/specialization). `see:`/`ref:` stay
+  untyped and fully supported, so existing knowledge bases are unaffected.
+- `scripts/kb_graph.py lineage <entry>` — the supersede chain around an entry: what
+  it (transitively) replaced, the replacement chain forward, and the **current
+  authority** (flagged when not `active`/`draft`). Structure only — IDs, titles,
+  status, never body text — built on demand, pure stdlib.
+- Four deterministic supersede lint checks: `superseded-status-mismatch`
+  (`status:` ⇄ `superseded_by:` must agree), `superseded-broken` (target must
+  exist), `superseded-missing-successor` (`status: superseded` needs a
+  `superseded_by:`), and `supersede-cycle` (reported once per chain member so
+  pre-commit file scoping still catches it). Judgment work — which prose markers
+  deserve typing — stays in `/review-knowledge`; lint stays model-free.
+- `link-add --kind` now also accepts `amends` and `extends`.
+- Tests: supersede-chain fixture (typed edge counts, every new lint finding, cycle
+  termination, per-member cycle scoping, typed `link-add`) in
+  `tests/test_kb_graph.py`.
+
+### Changed
+- `record-knowledge` skill: the Correction Flow's successor-side back-link is now a
+  typed `- amends:` link instead of the prose `- see: corrects [original](...)`;
+  documented when `amends:`/`extends:` apply versus plain `see:` (typed vocabulary
+  kept deliberately minimal).
+- `recall-knowledge` skill: a `superseded` search hit is resolved to the current
+  authority with `kb_graph.py lineage` (the chain may be multi-step) instead of
+  hand-following `superseded_by` links; `lineage` joins the structure-first command
+  set for decision-evolution recalls.
+- `review-knowledge` skill: the precomputed `graph_lint` input now covers the
+  superseded chain check deterministically; multi-step chains are reported via
+  `lineage` so the user sees where a superseded entry actually ends up.
+
+## [1.16.0] - 2026-08-11
+
+### Added
+- `hooks/sessionend_tasks_mirror.py` — SessionEnd hook that mirrors worktree-local
+  `.claude/tasks/` back to the main checkout in issue-centric mode. Copy-only with
+  shadow-copy on conflict; no-ops in git-tracked mode, agent worktrees, and outside
+  worktrees. Opt-out: `CCMEMO_TASKS_MIRROR=0`. (#21)
+- `scripts/kb_graph.py link-add` — deterministic see-link writer: idempotent,
+  append-only, atomic, fails loudly on ambiguity; `--bidirectional` validates both
+  directions before writing either file. record-knowledge step 7 now calls it
+  instead of hand-editing backlinks. (#22)
+
 ## [1.15.0] - 2026-07-27
 
 ### Added

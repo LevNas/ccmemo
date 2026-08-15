@@ -18,7 +18,9 @@ The input may contain `graph_stats` and `graph_lint` sections — deterministic 
 - `graph_stats` covers orphan detection (b), and the connectivity part of the summary
   statistics (e): hubs, edge counts, connected components
 - `graph_lint` covers broken see links (g), broken file references (h — `broken-link`
-  and `out-of-tree` findings), unregistered tags (part of d), plus `self-link`,
+  and `out-of-tree` findings), unregistered tags (part of d), the superseded chain
+  check (k — `superseded-status-mismatch`, `superseded-broken`,
+  `superseded-missing-successor`, `supersede-cycle`), plus `self-link`,
   `duplicate-link`, `missing-title`, and `filename` findings
 
 Spend the saved effort on the judgment sections the script cannot do: staleness (a),
@@ -88,6 +90,12 @@ Scan the entire knowledge base and report:
 #### k. Superseded Chain Check
 - Entries with `status: superseded` must have a valid `superseded_by` path
 - Check that the replacement entry exists and is `active`
+- `graph_lint` covers the mechanical part deterministically
+  (`superseded-status-mismatch` / `superseded-broken` /
+  `superseded-missing-successor` / `supersede-cycle`)
+- For multi-step chains, `kb_graph.py lineage <entry>` prints the full chain and
+  the current authority — use it when reporting so the user sees where a
+  superseded entry actually ends up
 - Report broken superseded chains
 
 #### l. Missing Overview

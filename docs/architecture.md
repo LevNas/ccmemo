@@ -11,7 +11,7 @@ Three scripts under `scripts/` back the search and review skills:
 |--------|---------|------|-------|
 | `kb_index.py` | `uv` (fastembed, sqlite-vec) | Build/refresh the per-machine vector index (sha256 incremental, idempotent) | v1.11.0 |
 | `kb_search.py` | `uv` (fastembed, sqlite-vec) | Hybrid query: lexical + vector arms, RRF fusion, `see:` 1-hop expansion, frontmatter filters | v1.11.0 |
-| `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / deterministic `lint` | v1.15.0 |
+| `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / `lineage` / `link-add` / deterministic `lint` | v1.15.0 |
 
 How the skills reach them:
 
@@ -20,7 +20,8 @@ How the skills reach them:
   ripgrep-only when the index or its dependencies are absent, and pointing at
   `kb_index.py` when advising an index build. Multi-hop recalls query
   `kb_graph.py neighborhood` / `path` first and read only the endpoint
-  entries. Details: [hybrid-search.md](hybrid-search.md),
+  entries; superseded hits are resolved to the current authority with
+  `kb_graph.py lineage`. Details: [hybrid-search.md](hybrid-search.md),
   [link-graph.md](link-graph.md).
 - **`/review-knowledge`** has the main agent precompute `kb_graph.py stats` +
   `lint` (deterministic, ~1s, no index needed) and pass the output to the

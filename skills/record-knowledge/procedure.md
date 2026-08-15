@@ -55,6 +55,8 @@ tags: "#tag1 #tag2 ..."
 
 - ref: [display text](URL or relative path)
 - see: [related entry title](YYYY/MM/slug.md) — relationship description
+- amends: [corrected entry title](YYYY/MM/slug.md) — what this corrects
+- extends: [base entry title](YYYY/MM/slug.md) — what this elaborates
 ```
 
 - Keep entries focused and under **100 KB** where possible
@@ -99,6 +101,19 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
   - **Design decision ↔ rationale**: architecture choice ↔ supporting evidence
 - Bidirectional links by default (if A → B, add B → A too)
 
+### Typed Links (`amends:` / `extends:`)
+
+Two typed list links carry lineage semantics that plain `see:` does not; `kb_graph.py` reads them as distinct edge kinds. Same line format as `see:`.
+
+| Kind | Meaning | Use when |
+|------|---------|----------|
+| `amends:` | Correction / addendum note | This entry corrects or supplements part of the target **without replacing it** — and, in the Correction Flow, the replacement entry pointing back at the entry it supersedes |
+| `extends:` | Elaboration | This entry develops, specializes, or builds on the target |
+
+- When neither applies, use plain `see:` — the typed vocabulary is deliberately minimal
+- `see:`/`ref:` stay untyped and fully supported; do NOT retype existing links in bulk
+- Full replacement is not a typed link: supersede lineage lives **only** in the `superseded_by:` frontmatter field (single source — never duplicate it as a list link). `kb_graph.py lineage` derives chains from it.
+
 ## Status Definitions
 
 | Status | Meaning |
@@ -117,9 +132,11 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
 | `high` | Verified multiple times, well-established |
 
 ### Correction Flow (superseded)
-1. Set `status: superseded` and add `superseded_by: YYYY/MM/newer-entry-slug.md`
-2. Create the replacement entry with a `- see:` link: `corrects [original title](YYYY/MM/original.md)`
+1. Set `status: superseded` and add `superseded_by: YYYY/MM/newer-entry-slug.md` (entries/-relative path)
+2. Create the replacement entry with an `- amends:` back-link: `- amends: [original title](YYYY/MM/original.md) — what was corrected`
 3. Keep the original entry intact
+
+`kb_graph.py lint` enforces the frontmatter pair deterministically (`superseded-status-mismatch`, `superseded-broken`, `superseded-missing-successor`, `supersede-cycle`).
 
 ## Amendment Rules
 - Entries are **mutable** — edit in place (git tracks change history)
@@ -155,6 +172,7 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
 
    - `<plugin_root>` is the plugin base directory — the parent of `skills/`, i.e. the directory containing this procedure file two levels up. It is shown in the skill loading message as "Base directory for this skill"
    - Entries are addressed by unique filename substring; run from the project root so `--root` resolves
-   - The command is idempotent (an existing link to the same target is skipped) and appends after the entry's last `see:`/`ref:` line or its `## 関連` heading
+   - Add `--kind amends` / `--kind extends` when the relationship is typed (default: `see`)
+   - The command is idempotent (an existing link to the same target is skipped) and appends after the entry's last link line (`see:`/`ref:`/`amends:`/`extends:`) or its `## 関連` heading
    - **Fallback**: if it exits non-zero (no see-block anchor, ambiguous name, missing frontmatter title), edit that one entry manually as before
 8. Return a summary of what was recorded: filename, `#` heading, `##` headings, and linked entries

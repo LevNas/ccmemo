@@ -7,8 +7,10 @@ runs with plain `python3`, needs no `uv`, no vector index, and no network.
 ## Design
 
 - **On-demand graph, no persisted index.** The graph is rebuilt each run from
-  the `- see:` / `- ref:` list links in the entries (~1s for a few hundred
-  entries). There is nothing to go stale and nothing to rebuild after a pull.
+  the list links in the entries (`- see:` / `- ref:` / `- amends:` /
+  `- extends:`) plus the `superseded_by:` frontmatter field (~1s for a few
+  hundred entries). There is nothing to go stale and nothing to rebuild after
+  a pull.
 - **Structure only, never body text.** Output contains entry IDs, titles, and
   edge kinds — so results stay cheap to inject into a model context. The
   intended flow is *structure first, bodies last*: use `neighborhood` / `path`
@@ -16,6 +18,15 @@ runs with plain `python3`, needs no `uv`, no vector index, and no network.
 - **Deterministic lint.** `lint` makes no model calls, so it can gate commits.
   Judgment work — staleness review, missing-connection suggestions — stays in
   `/review-knowledge`.
+
+## Edge kinds
+
+| Kind | Source | Meaning |
+|---|---|---|
+| `see` / `ref` | list link | Untyped association (unchanged, backward compatible) |
+| `amends` | list link | Correction / addendum note — corrects part of the target without replacing it |
+| `extends` | list link | Elaboration — develops or specializes the target |
+| `superseded_by` | `superseded_by:` frontmatter | Full replacement: old entry → its replacement. Single source for supersede lineage — never duplicated as a list link. Entries-root-relative path, at most one per entry |
 
 ## Subcommands
 
@@ -25,6 +36,8 @@ Run from the project root; the default `--root` is `.claude/knowledge/entries`.
 python3 scripts/kb_graph.py stats                    # hubs, orphans, components
 python3 scripts/kb_graph.py neighborhood <entry> --depth 2
 python3 scripts/kb_graph.py path <entry-a> <entry-b> # shortest link path
+python3 scripts/kb_graph.py lineage <entry>          # supersede chain → current authority
+python3 scripts/kb_graph.py link-add <src> <dst> --reason "why"  # deterministic writer
 python3 scripts/kb_graph.py lint                     # exit 1 on findings
 ```
 
@@ -43,6 +56,25 @@ its depth, link direction (`→` outgoing / `←` incoming), and edge kind.
 Shortest link path between two entries, treating links as bidirectional.
 Exits 1 if no path exists.
 
+### `lineage <entry>`
+
+The supersede chain around an entry, built from `superseded_by:` frontmatter
+edges only: what the entry (transitively) replaced, the replacement chain
+forward, and the **current authority** — the newest entry in the chain,
+flagged when its status is not `active`/`draft`. Structure only (IDs, titles,
+status), so a superseded search hit resolves to the entry that actually holds
+the current answer in one command.
+
+### `link-add <src> <dst> --reason "..."`
+
+Deterministic writer counterpart of the graph reader: the model decides which
+entries to connect and writes the reason; the mechanical edit is deterministic.
+Appends after the entry's last link line (or a `## 関連` heading), is
+idempotent per target, writes atomically, and exits non-zero on any ambiguity
+so the caller can fall back to a manual edit. `--kind see|ref|amends|extends`
+(default `see`); `--bidirectional` validates both directions before writing
+either file; `--dry-run` prints the planned insertion.
+
 ### `lint [files...]`
 
 Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
@@ -56,6 +88,10 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 | `missing-title` | no `title:` in the frontmatter |
 | `filename` | filename does not match `<date>-<time>-...-<slug>.md` |
 | `unknown-tag` | tag not in the registry (default: `<root>/../CLAUDE.md`, override with `--registry`) |
+| `superseded-status-mismatch` | `superseded_by:` present but `status:` is not `superseded` |
+| `superseded-broken` | `superseded_by:` target resolves to no entry |
+| `superseded-missing-successor` | `status: superseded` but no `superseded_by:` |
+| `supersede-cycle` | `superseded_by:` chain loops — reported once per member so file scoping still catches it |
 
 Passing file arguments limits the *reported* findings to those files (the
 graph is still built from all entries), which is exactly what a pre-commit
@@ -68,9 +104,9 @@ changed=$(git diff --cached --name-only -- .claude/knowledge/entries/)
 
 ## Addressing entries
 
-`neighborhood` and `path` accept an entry's path relative to the entries root,
-or any **unique filename substring** — `docker-compose` is enough if only one
-entry matches. Ambiguous queries fail with the list of candidates.
+Every subcommand that takes an entry accepts its path relative to the entries
+root, or any **unique filename substring** — `docker-compose` is enough if only
+one entry matches. Ambiguous queries fail with the list of candidates.
 
 ## Link resolution
 
@@ -88,13 +124,20 @@ by `lint` but are not part of the entry graph.
 
 ## How the skills use it
 
+- **`/record-knowledge`** — backlinks (step 7) and typed links are written with
+  `link-add` instead of hand-editing entry files; the Correction Flow's
+  successor-side back-link is an `amends:` link.
 - **`/recall-knowledge`** — multi-hop recalls (tracing how a decision evolved,
   connecting two topics, mapping an area) query `neighborhood` / `path` first
   and read only the endpoint entries, instead of chaining
-  search → read → follow links → read again.
+  search → read → follow links → read again. A `superseded` hit is resolved to
+  the current authority with `lineage`.
 - **`/review-knowledge`** — the main agent precomputes `stats` + `lint` and
   passes the output to the review subagent, which spends its effort on
-  judgment work instead of re-deriving link facts by hand.
+  judgment work instead of re-deriving link facts by hand. The supersede-chain
+  part of the health check is covered by the four deterministic lint checks;
+  typing judgment (which prose markers deserve `amends:`/`extends:`) stays
+  with the reviewer.
 
 ## Related
 
