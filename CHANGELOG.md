@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.22.0] - 2026-08-17
+
+### Fixed
+- The context-guard Stop hook's "recorded recently" suppression no longer
+  scans the transcript for the entries-path substring — mere path *mentions*
+  (the per-prompt auto-search injection alone contains entry paths, as do
+  search results and issue bodies) kept the nudge suppressed almost
+  permanently, which was why the hook rarely fired in real sessions.
+  Suppression is now judged by entry-file **mtimes** under
+  `.claude/knowledge/entries/`, which sees every real write path — direct
+  edits, the canonical subagent recording flow (whose Write happens in a
+  separate transcript and was invisible to any transcript scan), and
+  `kb_graph.py` CLI writes — while being immune to mentions.
+
+### Added
+- `CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN` (default 45): how many minutes one
+  entry write keeps the nudge quiet.
+- Threshold guidance for bounded context windows in
+  `docs/architecture.md` (Context Guard → Configuration), including the
+  observed transcript-bytes-per-token rule of thumb.
+- Tests: `tests/test_context_guard.py` — threshold gate, `stop_hook_active`
+  loop guard, mtime suppression and window override, and a regression test
+  pinning that path mentions alone no longer suppress.
+
 ## [1.21.1] - 2026-08-16
 
 ### Fixed

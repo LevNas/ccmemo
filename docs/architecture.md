@@ -84,9 +84,14 @@ is automatically appended to the active task's `context-*.md` file. This provide
 incremental context capture that survives compaction. Only fires when an active task
 exists in `.claude/tasks/readme.md`.
 
-**Stage 2 (Stop hook):** When the transcript exceeds 300KB and no knowledge entry has
-been recorded recently, Claude pauses and asks if you want to run `/record-knowledge`.
-Answer "不要" to skip.
+**Stage 2 (Stop hook):** When the transcript exceeds 300KB and no knowledge entry
+has been written recently, the stop is blocked once so the *model* self-assesses:
+it either records (via `/record-knowledge` / session-wrap) or ends the session
+when only routine work happened. "Recorded recently" is judged by entry-file
+mtimes under `.claude/knowledge/entries/` — not by scanning the transcript,
+where mere path *mentions* (the per-prompt auto-search injection alone contains
+entry paths) used to suppress the nudge almost permanently, and where the
+canonical subagent recording flow leaves no Write call at all.
 
 **Stage 3 (PreCompact hook):** Before compaction, a checkpoint is automatically saved
 to `.claude/context-checkpoints/` with modified file paths and user decisions extracted
@@ -139,11 +144,21 @@ compaction occurs — it does not exist until then.
 
 ### Configuration
 
-Set the size threshold for the Stop hook via environment variable:
+Two environment variables tune the Stop hook:
 
 ```bash
-export CCMEMO_CONTEXT_GUARD_THRESHOLD_KB=500  # default: 300
+export CCMEMO_CONTEXT_GUARD_THRESHOLD_KB=500      # default: 300
+export CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN=45   # default: 45
 ```
+
+- `…_THRESHOLD_KB` — transcript size at which the nudge starts firing. The
+  default 300KB corresponds very roughly to a few tens of thousands of context
+  tokens; sessions on a 200k-token window that want a single mid-session nudge
+  comfortably before auto-compaction typically raise it (800–1200KB observed
+  to work well — transcript bytes run at roughly 10KB per 1k context tokens,
+  tool-output-heavy sessions higher).
+- `…_RECENT_WRITE_MIN` — how long one entry write keeps the nudge quiet, so a
+  session that just recorded is not immediately re-nudged.
 
 ### Disabling
 

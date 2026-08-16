@@ -17,11 +17,16 @@ turn with no loop, and recording still goes through the explicit skills
 
 Environment:
     CCMEMO_CONTEXT_GUARD_THRESHOLD_KB: Size threshold in KB (default: 300)
+    CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN: How many minutes a knowledge-entry
+        write suppresses the nudge (default: 45)
 """
 
 import json
 import os
 import sys
+import time
+
+ENTRIES_DIR = os.path.join(".claude", "knowledge", "entries")
 
 
 def get_threshold_bytes() -> int:
@@ -30,28 +35,36 @@ def get_threshold_bytes() -> int:
     return kb * 1024
 
 
-def has_recent_knowledge_write(transcript_path: str) -> bool:
-    """Check if a knowledge entry was written recently in the transcript.
+def get_recent_write_window_s() -> int:
+    """Return the suppression window after an entry write, in seconds."""
+    minutes = int(os.environ.get("CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN", "45"))
+    return minutes * 60
 
-    Scans the last portion of the transcript for Write/Edit tool calls
-    targeting .claude/knowledge/entries/.
+
+def has_recent_knowledge_write() -> bool:
+    """Whether a knowledge entry in THIS project was written recently.
+
+    Checks entry-file mtimes under .claude/knowledge/entries/ (cwd-relative,
+    the directory the session records into). Deliberately NOT a transcript
+    scan: a substring check suppressed on mere path *mentions* (the per-prompt
+    auto-search injection alone contains entry paths, so the guard almost
+    never fired), while an actual-tool-call check would miss the canonical
+    subagent recording flow, whose Write happens in a separate transcript.
+    File mtimes see every write path — direct edits, recording subagents and
+    kb_graph CLI writes alike.
     """
-    try:
-        size = os.path.getsize(transcript_path)
-    except OSError:
+    latest = 0.0
+    for dirpath, _dirnames, filenames in os.walk(ENTRIES_DIR):
+        for fn in filenames:
+            if not fn.endswith(".md") or fn == "CLAUDE.md":
+                continue
+            try:
+                latest = max(latest, os.path.getmtime(os.path.join(dirpath, fn)))
+            except OSError:
+                continue
+    if not latest:
         return False
-
-    # Read last 100KB of the transcript to check for recent writes
-    read_size = min(size, 100 * 1024)
-    try:
-        with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
-            if size > read_size:
-                f.seek(size - read_size)
-            tail = f.read()
-    except OSError:
-        return False
-
-    return ".claude/knowledge/entries/" in tail
+    return (time.time() - latest) < get_recent_write_window_s()
 
 
 def main() -> None:
@@ -85,7 +98,7 @@ def main() -> None:
         return
 
     # Check if knowledge was already recorded
-    if has_recent_knowledge_write(transcript_path):
+    if has_recent_knowledge_write():
         print("{}")
         return
 
