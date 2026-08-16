@@ -31,7 +31,10 @@ How the skills reach them:
   unavailable.
 - The per-prompt `UserPromptSubmit` hook stays **ripgrep-only** (instant,
   model-free injection) — neither the vector index nor the graph CLI is wired
-  into it.
+  into it. Since v1.19.0 it is status-aware: only `active` entries surface by
+  default (`CCMEMO_SEARCH_STATUS` widens or disables the filter, and
+  deliberately surfaced non-active entries carry a `[status: …]` annotation),
+  still with plain rg/awk and no index.
 
 ## Subagent Delegation (since v1.8.0)
 

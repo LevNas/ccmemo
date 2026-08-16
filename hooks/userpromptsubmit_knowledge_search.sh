@@ -4,12 +4,18 @@
 # Reads prompt JSON from stdin, extracts Japanese nouns with mecab, searches
 # .claude/knowledge/entries/ with rg, and injects the top N hits as
 # additionalContext so Claude sees them before answering.
+#
+# Only entries whose frontmatter status is in CCMEMO_SEARCH_STATUS surface
+# (default: active; entries without a status line count as active; "all"
+# disables the filter). Non-active entries that are deliberately allowed
+# through are annotated with their status and superseded_by target.
 set -euo pipefail
 
 MAX_RESULTS=5
 MIN_WORD_LEN=2
 HIT_COUNT_LIMIT=50
 ENTRIES_DIR=".claude/knowledge/entries"
+ALLOWED_STATUS="${CCMEMO_SEARCH_STATUS:-active}"
 
 # Silently no-op if required tools or entries dir are missing.
 command -v jq >/dev/null 2>&1 || exit 0
@@ -50,17 +56,49 @@ done <<< "$KEYWORDS"
 [ "${#file_scores[@]}" -gt 0 ] || exit 0
 set -u
 
+# Walk the ranking until MAX_RESULTS allowed entries are collected, so
+# entries dropped by the status filter do not consume result slots.
 RESULTS=""
+result_count=0
 while IFS= read -r line; do
   filepath=${line#* }
   [ -n "$filepath" ] || continue
-  title=$(rg --no-filename '^title:' "$filepath" 2>/dev/null | head -1 | sed 's/^title:[[:space:]]*//' | tr -d '"')
+  # Read status / superseded_by from the frontmatter block only, so body
+  # text that happens to start a line with "status:" cannot leak in.
+  status=""
+  superseded_by=""
+  IFS=$'\t' read -r status superseded_by < <(awk '
+    { sub(/\r$/, "") }
+    NR == 1 { if ($0 != "---") exit; next }
+    $0 == "---" { exit }
+    sub(/^status:[[:space:]]*/, "")        { gsub(/"/, ""); sub(/[[:space:]]+$/, ""); s = $0 }
+    sub(/^superseded_by:[[:space:]]*/, "") { gsub(/"/, ""); sub(/[[:space:]]+$/, ""); sb = $0 }
+    END { printf "%s\t%s\n", s, sb }
+  ' "$filepath" 2>/dev/null) || true
+  status=${status:-active}
+  if [ "$ALLOWED_STATUS" != "all" ]; then
+    case ",${ALLOWED_STATUS}," in
+      *",${status},"*) ;;
+      *) continue ;;
+    esac
+  fi
+  # `|| true`: with pipefail a title-less file would otherwise abort the
+  # whole hook (rg exits 1), making the basename fallback unreachable.
+  title=$(rg --no-filename '^title:' "$filepath" 2>/dev/null | head -1 | sed 's/^title:[[:space:]]*//' | tr -d '"' || true)
   [ -n "$title" ] || title=$(basename "$filepath" .md)
-  RESULTS="${RESULTS}- ${title} (${filepath})"$'\n'
+  note=""
+  if [ "$status" != "active" ]; then
+    note=" [status: ${status}"
+    [ -n "$superseded_by" ] && note="${note}, superseded_by: ${superseded_by}"
+    note="${note}]"
+  fi
+  RESULTS="${RESULTS}- ${title} (${filepath})${note}"$'\n'
+  result_count=$((result_count + 1))
+  [ "$result_count" -lt "$MAX_RESULTS" ] || break
 done < <(
   for f in "${!file_scores[@]}"; do
     printf '%s %s\n' "${file_scores[$f]}" "$f"
-  done | sort -rn | head -"$MAX_RESULTS"
+  done | sort -rn
 )
 
 [ -n "$RESULTS" ] || exit 0
