@@ -137,6 +137,13 @@ entries before starting work. Patterns and examples:
   `all` to disable filtering; non-active entries surfaced that way are
   annotated with `[status: …, superseded_by: …]` so they cannot be mistaken
   for current knowledge.
+- **Context-guard nudge tuning** — when a session's transcript exceeds
+  `CCMEMO_CONTEXT_GUARD_THRESHOLD_KB` (default 300) and no knowledge entry
+  was written in the last `CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN` minutes
+  (default 45), the Stop hook nudges once to record before ending. If the
+  nudge fires too often on heavy sessions, raise the threshold — sizing
+  guidance for bounded context windows is in
+  [architecture.md](architecture.md) (Context Guard → Configuration).
 
 ## Why keep it in a Git repository
 
