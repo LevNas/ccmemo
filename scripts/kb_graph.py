@@ -11,13 +11,15 @@ Subcommands:
   path <a> <b>           shortest link path between two entries
   lineage <entry>        supersede chain: what this replaced, what replaced it
   link-add <src> <dst>   deterministically append a typed link line to src
+  supersede <old> <new>  mark old as replaced by new: frontmatter pair,
+                         body-top banner, amends back-link — in one atomic step
   lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings)
 
 Edge kinds:
   see / ref              untyped association (list links, unchanged)
   amends / extends       typed list links: correction note / elaboration
   superseded_by          derived from the `superseded_by:` frontmatter field
-                         (correction flow) — old entry -> replacement, max one
+                         (change flow) — old entry -> replacement, max one
                          per entry, entries-root-relative path only
 
 Output contains entry IDs, titles and edge types only — never body text —
@@ -54,6 +56,7 @@ pre-commit example (fires only when staged entries changed):
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -517,6 +520,101 @@ def cmd_link_add(root, nodes, args):
             print(f"linked: {s} -> {d}")
 
 
+BANNER_MARK = "> **⚠ superseded"
+
+
+def cmd_supersede(root, nodes, edges, args):
+    """Mark old as replaced by new: frontmatter pair + banner + back-link.
+
+    All three pieces are validated before anything is written, and each is
+    skipped when already present, so an interrupted run can simply be re-run
+    (idempotent completion). Exits non-zero on any ambiguity.
+    """
+    old = resolve_entry(nodes, args.old)
+    new = resolve_entry(nodes, args.new)
+    root_abs = os.path.abspath(root)
+    if old == new:
+        sys.exit("error: refusing to supersede an entry with itself")
+    new_title = nodes[new]["title"]
+    if not new_title:
+        sys.exit(f"error: replacement entry has no frontmatter title: {new}")
+    if "[" in new_title or "]" in new_title:
+        sys.exit(f"error: title of {new} contains a square bracket — the banner "
+                 "link label would not parse; rename the title first")
+
+    # A superseded_by chain from the replacement must not lead back to the
+    # old entry — that would create a supersede cycle.
+    nxt, _prevs = supersede_maps(edges)
+    cur, hops = new, 0
+    while cur in nxt and hops <= len(nxt):
+        cur = nxt[cur]
+        hops += 1
+        if cur == old:
+            sys.exit(f"error: {new} is (transitively) superseded by {old} — "
+                     "refusing to create a supersede cycle")
+
+    old_path = os.path.join(root_abs, old)
+    with open(old_path, encoding="utf-8") as f:
+        old_text = f.read()
+    meta = parse_frontmatter(old_text)
+    if not meta:
+        sys.exit(f"error: old entry has no frontmatter: {old}")
+    existing = meta.get("superseded_by", "")
+    if existing and existing != new:
+        sys.exit(f"error: {old} is already superseded by {existing} — "
+                 "refusing to overwrite; resolve the lineage manually")
+
+    plans = []  # (path, new_text, done_message)
+
+    updated = old_text
+    # 1) Frontmatter: status + superseded_by as an adjacent pair.
+    if meta.get("status") != "superseded" or existing != new:
+        fm_end = updated.find("\n---", 3)
+        head, rebuilt, inserted = updated[:fm_end].splitlines(), [], False
+        for ln in head:
+            if re.match(r"^superseded_by:\s*", ln):
+                continue
+            if re.match(r"^status:\s*", ln):
+                rebuilt.append("status: superseded")
+                rebuilt.append(f"superseded_by: {new}")
+                inserted = True
+            else:
+                rebuilt.append(ln)
+        if not inserted:
+            rebuilt.append("status: superseded")
+            rebuilt.append(f"superseded_by: {new}")
+        updated = "\n".join(rebuilt) + updated[fm_end:]
+    # 2) Body-top warning banner, directly under the closing delimiter.
+    if BANNER_MARK not in updated:
+        fm_end = updated.find("\n---", 3)
+        nl = updated.find("\n", fm_end + 1)
+        if nl == -1:
+            updated += "\n"
+            nl = len(updated) - 1
+        banner = (f"\n{BANNER_MARK} ({args.date})** — current: "
+                  f"[{new_title}]({new})\n")
+        updated = updated[:nl + 1] + banner + updated[nl + 1:]
+    if updated != old_text:
+        plans.append((old_path, updated, f"marked superseded: {old} -> {new}"))
+
+    # 3) amends back-link in the replacement (validated before any write;
+    #    plan_link exits non-zero on a missing anchor or bracketed old title).
+    link_plan = plan_link(root_abs, nodes, new, old, "amends", args.reason)
+    if link_plan:
+        path, text, line = link_plan
+        plans.append((path, text, f"back-linked: {new} -> {old}\n  {line.rstrip()}"))
+
+    if not plans:
+        print(f"already superseded: {old} -> {new} (banner and back-link present)")
+        return
+    for path, text, message in plans:
+        if args.dry_run:
+            print(f"dry-run: would have {message}")
+        else:
+            _write_atomic(path, text)
+            print(message)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--root", default=".claude/knowledge/entries",
@@ -544,6 +642,15 @@ def main():
                     help="reason for the reverse link (default: --reason)")
     la.add_argument("--dry-run", action="store_true",
                     help="print planned insertions without writing")
+    sp = sub.add_parser("supersede")
+    sp.add_argument("old", help="entry being replaced (unique filename substring)")
+    sp.add_argument("new", help="replacement entry")
+    sp.add_argument("--reason", required=True,
+                    help="what the replacement changes (amends back-link text)")
+    sp.add_argument("--date", default=None,
+                    help="banner date, YYYY-MM-DD (default: today)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="print planned changes without writing")
     li = sub.add_parser("lint")
     li.add_argument("files", nargs="*",
                     help="limit findings to these files (e.g. staged entries)")
@@ -565,6 +672,10 @@ def main():
         cmd_lineage(nodes, edges, resolve_entry(nodes, args.entry), args.json)
     elif args.cmd == "link-add":
         cmd_link_add(args.root, nodes, args)
+    elif args.cmd == "supersede":
+        if args.date is None:
+            args.date = datetime.date.today().isoformat()
+        cmd_supersede(args.root, nodes, edges, args)
     elif args.cmd == "lint":
         registry = args.registry or os.path.join(args.root, "..", "CLAUDE.md")
         cmd_lint(nodes, edges, problems, registry, args.files, args.json)

@@ -107,7 +107,7 @@ Two typed list links carry lineage semantics that plain `see:` does not; `kb_gra
 
 | Kind | Meaning | Use when |
 |------|---------|----------|
-| `amends:` | Correction / addendum note | This entry corrects or supplements part of the target **without replacing it** — and, in the Correction Flow, the replacement entry pointing back at the entry it supersedes |
+| `amends:` | Correction / addendum note | This entry corrects or supplements part of the target **without replacing it** — and, in the Change Flow, the replacement entry pointing back at the entry it supersedes |
 | `extends:` | Elaboration | This entry develops, specializes, or builds on the target |
 
 - When neither applies, use plain `see:` — the typed vocabulary is deliberately minimal
@@ -131,17 +131,54 @@ Two typed list links carry lineage semantics that plain `see:` does not; `kb_gra
 | `mid` | Reproduced or confirmed in some contexts |
 | `high` | Verified multiple times, well-established |
 
-### Correction Flow (superseded)
-1. Set `status: superseded` and add `superseded_by: YYYY/MM/newer-entry-slug.md` (entries/-relative path)
-2. Create the replacement entry with an `- amends:` back-link: `- amends: [original title](YYYY/MM/original.md) — what was corrected`
-3. Keep the original entry intact
+### Change Flow (supersede)
 
-`kb_graph.py lint` enforces the frontmatter pair deterministically (`superseded-status-mismatch`, `superseded-broken`, `superseded-missing-successor`, `supersede-cycle`).
+Use when the Amendment Rules below say **supersede**: the change is not just a correction — the conclusion, policy, or understanding is updated and readers should no longer follow the old entry.
 
-## Amendment Rules
-- Entries are **mutable** — edit in place (git tracks change history)
-- Use `deprecated` only when knowledge is genuinely obsolete
-- Use `superseded` when an entry is replaced by a corrected version
+1. Create the replacement entry first (normal recording flow)
+2. Run the bundled helper — it applies every mechanical piece in one validated step:
+
+   ```bash
+   python3 "<plugin_root>/scripts/kb_graph.py" --root .claude/knowledge/entries \
+     supersede <old-entry-filename> <new-entry-filename> \
+     --reason "<what the replacement changes>"
+   ```
+
+   It sets the `status: superseded` + `superseded_by:` frontmatter pair on the old entry, inserts the body-top warning banner (next section), and appends an `- amends:` back-link to the replacement (skipped when the replacement already links the old entry). Everything is validated before anything is written, and re-running is safe — an interrupted run is completed. On a non-zero exit (ambiguous name, bracketed title, no link anchor, conflicting successor), fall back to the manual steps:
+   - Old entry: set `status: superseded`, add `superseded_by: YYYY/MM/newer-entry-slug.md` (entries/-relative path)
+   - Old entry: insert the warning banner directly under the frontmatter
+   - Replacement: add `- amends: [original title](YYYY/MM/original.md) — what changed`
+3. Keep the original entry body intact otherwise — supersede is a status change plus banner, not an edit
+
+`kb_graph.py lint` enforces the frontmatter pair deterministically (`superseded-status-mismatch`, `superseded-broken`, `superseded-missing-successor`, `supersede-cycle`); `kb_graph.py lineage` resolves chains to the current authority.
+
+### Warning Banner (superseded / deprecated)
+
+Non-active entries carry a banner as the first body line, so a human opening the file directly (editor, code hosting) sees the state before the content:
+
+```markdown
+> **⚠ superseded (YYYY-MM-DD)** — current: [replacement title](YYYY/MM/slug.md)
+```
+
+For `deprecated` (obsolete without a replacement): `> **⚠ deprecated (YYYY-MM-DD)** — <why it no longer applies>`
+
+The banner is a human aid — machine paths already respect `status` (the per-prompt auto-search hook filters non-active entries, dedup scans skip them). Keep it a blockquote: it must NOT be a `- see:`-style list line, or it would double-book the lineage as a graph edge.
+
+## Amendment Rules (in-place vs new entry vs supersede)
+
+Entries are **mutable** — in-place editing is the default, and git tracks history. When knowledge *changes*, pick the recording form with one question: **may the old entry still be cited as current knowledge afterwards?**
+
+| Change | Old still current? | Action |
+|--------|--------------------|--------|
+| Correction — typos, broken links, wording | yes | Edit in place |
+| Reinforcement — sources/examples added; conclusion and confidence unchanged | yes | Edit in place |
+| Partial correction / addendum note on the target | yes | New entry + `- amends:` link; old stays `active` |
+| Elaboration / specialization building on the target | yes | New entry + `- extends:` link; old stays `active` |
+| Evolution / replacement — conclusion, policy, or understanding updated | **no** | New entry + Change Flow (supersede) above |
+
+- Superseding on every edit shatters a topic into time slices; in-place editing a changed conclusion hides the change from readers. The question above is the boundary.
+- Use `deprecated` only when knowledge is genuinely obsolete **without** a replacement; when there is a replacement, supersede.
+- Not retroactive: do not reshape existing entries wholesale — apply the rule from the next change onward.
 
 ## Entry Granularity
 **1 entry = 1 topic.** Splitting guidelines:
