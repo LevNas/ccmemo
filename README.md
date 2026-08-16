@@ -3,6 +3,7 @@
 [![lint](https://github.com/LevNas/ccmemo/actions/workflows/lint.yml/badge.svg)](https://github.com/LevNas/ccmemo/actions/workflows/lint.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c5cff)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/LevNas/ccmemo)
 
 Claude Code starts every session with a blank slate — ccmemo saves knowledge and
 plans as plain Markdown in your repository, so the next session (or a teammate's)
