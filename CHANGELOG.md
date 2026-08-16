@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.21.0] - 2026-08-16
+
+### Fixed
+- The `op://` redaction pattern no longer swallows adjacent syntax. The
+  greedy `\S+` consumed the closing quote, backtick or paren right after a
+  reference (`{{ onepasswordRead "op://…" | trim }}` lost its closing quote;
+  `` `op://` `` lost its closing backtick), mangling entry bodies on every
+  re-edit. The pattern now matches only the URI charset and must end on an
+  alphanumeric, so it stops at quotes, brackets, CJK text and trailing
+  punctuation. Applies to every redaction surface (entry profile, structured
+  args, free text); a deliberate, documented deviation from the shared TS
+  SPEC pattern.
+
+### Added
+- `CCMEMO_REDACT_OP_REF=keep-names`: the entry redact hook keeps `op://`
+  item-name references (`op://vault/item-name/field` — no secret value; a
+  host secrets policy may explicitly allow them) and masks only references
+  containing a raw 26-character item/vault ID segment. Default unchanged:
+  every `op://` reference is masked.
+- Tests: adjacent-syntax preservation (quote/backtick/paren), keep-names
+  name-vs-raw-ID split, unchanged default behaviour.
+
+### Changed
+- `docs/link-graph.md`: the pre-commit lint section now documents wiring for
+  a **consuming** repository. Pointing a hook at the version-keyed plugin
+  cache path freezes the lint on an old copy after every update and dies
+  silently once the cache is cleared; the docs now recommend a repo-committed
+  copy with loud skip paths, with a fail-loud newest-cache-copy resolver as
+  the alternative. The in-repo snippet in `scripts/kb_graph.py` carries a
+  matching warning.
+
 ## [1.20.0] - 2026-08-16
 
 ### Added

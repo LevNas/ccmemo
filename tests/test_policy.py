@@ -123,6 +123,31 @@ def test_leak_scan_repo_name_from_env():
             os.environ[key] = prev
 
 
+def test_redact_op_ref_stops_at_adjacent_syntax():
+    # The greedy `op://\S+` used to eat the closing quote / backtick / paren.
+    text = ('cfg: {{ onepasswordRead "op://Personal/some-item/field" | trim }}\n'
+            "inline `op://Personal/some-item/field` and (op://Personal/some-item/field).\n")
+    out, hits = redact.redact_secrets_in_text(text)
+    assert hits == [("op-ref", 3)], hits
+    assert f'"{PH}" | trim' in out, out
+    assert f"`{PH}`" in out, out
+    assert f"({PH})." in out, out
+
+
+def test_redact_op_ref_keep_names_mode():
+    named = "op://Personal/git-config/email"
+    raw = "op://Personal/abcdefghijklmnopqrstuvwxyz/token"  # 26-char raw ID segment
+    text = f"- {named}\n- {raw}\n"
+    out, hits = redact.redact_secrets_in_text(text, op_ref_mode="keep-names")
+    assert named in out, "item-name reference must survive keep-names"
+    assert raw not in out and PH in out, out
+    assert hits == [("op-ref", 1)], hits
+    # default mode is unchanged: both are masked
+    out2, hits2 = redact.redact_secrets_in_text(text)
+    assert named not in out2 and raw not in out2
+    assert hits2 == [("op-ref", 2)], hits2
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

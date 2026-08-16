@@ -53,6 +53,8 @@ machine-readable output. `--root` points at the entries dir
 pre-commit example (fires only when staged entries changed):
     changed=$(git diff --cached --name-only -- .claude/knowledge/entries/)
     [ -z "$changed" ] || python3 scripts/kb_graph.py lint $changed
+(inside this repo only — a CONSUMING repo must not point a hook at the
+version-keyed plugin cache path; see docs/link-graph.md for the wiring)
 """
 
 import argparse

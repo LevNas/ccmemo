@@ -53,8 +53,13 @@ def main() -> None:
     except OSError:
         return
 
-    # 1. Redact unambiguous secret values in place.
-    redacted, hits = redact.redact_secrets_in_text(content)
+    # 1. Redact unambiguous secret values in place. CCMEMO_REDACT_OP_REF=
+    # keep-names lets a host policy keep op:// item-name references (no
+    # secret value) while still masking raw 26-char item/vault IDs.
+    op_ref_mode = ("keep-names"
+                   if os.environ.get("CCMEMO_REDACT_OP_REF") == "keep-names"
+                   else "mask-all")
+    redacted, hits = redact.redact_secrets_in_text(content, op_ref_mode=op_ref_mode)
     if hits:
         try:
             with open(file_path, "w", encoding="utf-8") as f:

@@ -48,7 +48,12 @@ SENSITIVE_KEYS = (
 )
 
 # --- Value patterns (regex literals ported verbatim from the TS母体) ----------
-OP_REF = re.compile(r"\bop://\S+", re.IGNORECASE)
+# OP_REF deviates from the TS母体's `op://\S+` on purpose: the greedy \S+ ate
+# adjacent syntax (a closing quote, backtick or paren right after the URI),
+# mangling the surrounding text. Matching only the URI charset and requiring
+# the match to end on an alphanumeric stops it at quotes, brackets, CJK text
+# and trailing punctuation.
+OP_REF = re.compile(r"\bop://[A-Za-z0-9._~%/-]*[A-Za-z0-9]", re.IGNORECASE)
 JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 GH_TOKEN = re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b")
@@ -67,6 +72,16 @@ ENTRY_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github-token", GH_TOKEN),
     ("email", EMAIL),
 )
+
+
+# 1Password item/vault IDs are 26-char lowercase alphanumeric strings. Item
+# NAME references (op://vault/item-name/field) carry no secret value, and a
+# host policy may explicitly allow them (CCMEMO_REDACT_OP_REF=keep-names).
+_OP_RAW_ID = re.compile(r"^[a-z0-9]{26}$")
+
+
+def _op_ref_contains_raw_id(ref: str) -> bool:
+    return any(_OP_RAW_ID.fullmatch(seg) for seg in ref[len("op://"):].split("/"))
 
 
 def _is_noreply(email: str) -> bool:
@@ -135,12 +150,18 @@ def redact_free_text(text: str, mode: str = "length") -> str:
     return f"{PLACEHOLDER} len={len(text)}"
 
 
-def redact_secrets_in_text(text: str) -> tuple[str, list[tuple[str, int]]]:
+def redact_secrets_in_text(
+    text: str, op_ref_mode: str = "mask-all"
+) -> tuple[str, list[tuple[str, int]]]:
     """Mask unambiguous secret *values* in a knowledge entry body.
 
     The entry profile: only the SPEC patterns that are unambiguous secrets
     (op://, JWT, PEM, GitHub token, non-noreply email). High-entropy is
     excluded to avoid clobbering git SHAs / long paths / base64 examples.
+
+    op_ref_mode: "mask-all" (default) masks every ``op://`` reference;
+    "keep-names" keeps item-name references and masks only those containing
+    a raw 26-character item/vault ID segment.
 
     Returns (new_text, hits) where hits is a list of (kind, count). When no
     secret is found, new_text is the input unchanged and hits is empty.
@@ -148,7 +169,20 @@ def redact_secrets_in_text(text: str) -> tuple[str, list[tuple[str, int]]]:
     hits: list[tuple[str, int]] = []
     result = text
     for kind, pattern in ENTRY_SECRET_PATTERNS:
-        if kind == "email":
+        if kind == "op-ref" and op_ref_mode == "keep-names":
+            count = 0
+
+            def _mask_op_ref(m: re.Match[str]) -> str:
+                nonlocal count
+                if not _op_ref_contains_raw_id(m.group(0)):
+                    return m.group(0)
+                count += 1
+                return PLACEHOLDER
+
+            result = pattern.sub(_mask_op_ref, result)
+            if count:
+                hits.append((kind, count))
+        elif kind == "email":
             count = 0
 
             def _mask_email(m: re.Match[str]) -> str:
