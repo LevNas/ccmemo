@@ -108,6 +108,10 @@ entries before starting work. Patterns and examples:
   to commit with a warning instead). It complements — does not replace — your
   manual end-of-session commit, so it is a no-op when you have already
   committed.
+- **Redact hook `op://` handling** — the entry redact hook masks every
+  `op://` reference by default. Set `CCMEMO_REDACT_OP_REF=keep-names` to keep
+  item-name references (`op://vault/item-name/field` — no secret value) and
+  mask only references containing a raw 26-character item/vault ID segment.
 - **Auto-search status filter** — the per-prompt `UserPromptSubmit` hook only
   injects entries whose frontmatter `status` is `active` (entries without a
   `status:` line count as active). Set `CCMEMO_SEARCH_STATUS` to a

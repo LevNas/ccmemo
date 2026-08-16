@@ -122,6 +122,47 @@ changed=$(git diff --cached --name-only -- .claude/knowledge/entries/)
 [ -z "$changed" ] || python3 scripts/kb_graph.py lint $changed
 ```
 
+That snippet resolves `scripts/kb_graph.py` and therefore only works inside
+this repository — a consuming repository needs one of the wirings below.
+
+### Wiring the lint into a consuming repository
+
+A git hook runs outside Claude Code, and the plugin cache path is
+version-keyed (`…/plugins/cache/<marketplace>/ccmemo/<version>/scripts/kb_graph.py`).
+Do **not** point a hook at that path: after every plugin update it keeps
+running the old frozen copy (old versions stay in the cache, so nothing
+errors), and when the cache is eventually cleared the hook dies — silently,
+if the hook skips on a missing script. Neither failure announces itself.
+
+**Recommended — commit a copy into the repository.** Copy
+`scripts/kb_graph.py` from the plugin into the repo at any stable path,
+point the hook at it, and update the copy deliberately when a release
+changes lint behaviour (release notes call that out). Every clone and
+machine then gets the same lint with the repo, plugin installed or not:
+
+```sh
+#!/bin/sh
+changed=$(git diff --cached --name-only --diff-filter=d -- .claude/knowledge/entries/)
+[ -z "$changed" ] && exit 0
+command -v python3 >/dev/null 2>&1 || { echo "kb-lint: python3 not found, skipping" >&2; exit 0; }
+lint=tools/kb_graph.py   # repo-committed copy
+[ -f "$lint" ] || { echo "kb-lint: $lint not found, skipping" >&2; exit 0; }
+exec python3 "$lint" lint $changed
+```
+
+Keep the skip paths loud (write to stderr): a gate that skips silently is the
+worst failure mode — nothing lints and nothing tells you.
+
+**Alternative — resolve the newest cache copy, fail loudly.** To track the
+plugin automatically instead, glob the cache for the newest version and
+refuse to continue when none is found (rather than skipping):
+
+```sh
+lint=$(ls -d "$HOME"/.claude/plugins/cache/*/ccmemo/*/scripts/kb_graph.py 2>/dev/null | sort -V | tail -1)
+[ -n "$lint" ] || { echo "kb-lint: no plugin cache copy found — install ccmemo or commit a copy" >&2; exit 1; }
+exec python3 "$lint" lint $changed
+```
+
 ## Addressing entries
 
 Every subcommand that takes an entry accepts its path relative to the entries

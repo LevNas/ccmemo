@@ -84,6 +84,7 @@ Python 標準ライブラリだけで動き、索引も要りません。
 - **著者**：エントリの `author` フィールドの既定は `@<ユーザー名>` です。Git ホスティングのユーザー名に設定します。
 - **ワークフロー**：`skills/*/SKILL.md` を編集すると、プロジェクト固有の規約（タグの分類、イシューコメントの書式、プランのテンプレート）を足せます。
 - **自動コミット（オプトイン、既定はオフ）**：`CCMEMO_AUTOCOMMIT=1` を設定すると、セーフティネットのフックがセッション終了時（`SessionEnd`）と compaction の前（`PreCompact`）に、`.claude/knowledge/` と `.claude/tasks/` の変更だけをコミットします。`git add -A` は実行せず、push もしません。漏えいしやすい形が差分に含まれる場合は leak-scan ゲートがコミットを止めます（`CCMEMO_AUTOCOMMIT_ON_LEAK=warn` にすると警告つきでコミットします）。これは手動のセッション終了コミットの置き換えではなく補完なので、すでにコミット済みなら何もしません。
+- **redact フックの `op://` の扱い**：エントリの redact フックは既定で `op://` 参照をすべてマスクします。`CCMEMO_REDACT_OP_REF=keep-names` を設定すると、項目名参照（`op://vault/項目名/field`。秘密の実値を含まない）は残し、26 文字の生 ID 形式セグメントを含む参照だけをマスクします。
 - **自動検索の status フィルタ**：毎プロンプトの `UserPromptSubmit` フックは、frontmatter の `status` が `active` のエントリだけを注入します（`status:` 行が無いエントリは active 扱い）。`CCMEMO_SEARCH_STATUS` にカンマ区切りの許可リスト（例：`active,superseded`）を設定すると広げられ、`all` でフィルタを無効化できます。この経路で表に出た非 active エントリには `[status: …, superseded_by: …]` の注記が付くため、現行の知識と取り違えることはありません。
 
 ## Git リポジトリに置く理由
