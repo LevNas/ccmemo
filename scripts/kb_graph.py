@@ -62,6 +62,10 @@ import tempfile
 from collections import deque
 
 LINK_RE = re.compile(r"^\s*-\s+(see|ref|amends|extends):\s*\[([^\]]*)\]\(([^)]+)\)", re.MULTILINE)
+# Loose shape of a link line: anything matching this but not LINK_RE would be
+# silently dropped from the graph (e.g. a label containing a square bracket),
+# so lint reports it as malformed-link instead of staying quiet.
+LOOSE_LINK_RE = re.compile(r"^\s*-\s+(see|ref|amends|extends):\s*\[")
 # Both registry line forms in use: "- #tag — description (count)" and "`#tag`"
 TAG_REGISTRY_RES = (
     re.compile(r"^- (#[\w\-]+)", re.MULTILINE),
@@ -111,6 +115,11 @@ def load_graph(root):
                 problems.append((nid, "missing-title", "no frontmatter title"))
             if not FILENAME_RE.match(fn):
                 problems.append((nid, "filename", "does not match <date>-<time>-...-<slug>.md"))
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if LOOSE_LINK_RE.match(line) and not LINK_RE.match(line):
+                    problems.append((nid, "malformed-link",
+                                     f"line {lineno}: does not parse as a link, "
+                                     f"no edge produced: {line.strip()[:80]}"))
             sup = meta.get("superseded_by", "")
             status = meta.get("status", "")
             if sup:
@@ -439,6 +448,9 @@ def plan_link(root, nodes, src, dst, kind, reason):
     title = nodes[dst]["title"]
     if not title:
         sys.exit(f"error: link target has no frontmatter title: {dst}")
+    if "[" in title or "]" in title:
+        sys.exit(f"error: title of {dst} contains a square bracket — the link "
+                 "label would not parse; rename the title or add the link manually")
     path = os.path.join(root, src)
     with open(path, encoding="utf-8") as f:
         text = f.read()

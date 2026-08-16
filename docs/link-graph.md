@@ -73,7 +73,9 @@ Appends after the entry's last link line (or a `## 関連` heading), is
 idempotent per target, writes atomically, and exits non-zero on any ambiguity
 so the caller can fall back to a manual edit. `--kind see|ref|amends|extends`
 (default `see`); `--bidirectional` validates both directions before writing
-either file; `--dry-run` prints the planned insertion.
+either file; `--dry-run` prints the planned insertion. A target whose
+frontmatter title contains a square bracket is refused — the label would not
+parse back as a link (see `malformed-link`); rename the title instead.
 
 ### `lint [files...]`
 
@@ -81,6 +83,7 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 
 | Check | Meaning |
 |---|---|
+| `malformed-link` | line looks like a link (`- see: [` …) but does not parse — e.g. a label containing a square bracket — and would otherwise silently produce no edge; reported with the line number |
 | `broken-link` | `see:`/`ref:` target resolves to no file inside the repository |
 | `out-of-tree` | target escapes the repository — resolves differently per checkout or machine |
 | `self-link` | entry links to itself |

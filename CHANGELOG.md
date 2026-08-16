@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.18.0] - 2026-08-16
+
+### Added
+- `malformed-link` lint check (#27): a line that looks like a list link
+  (`- see: [` … — loose pattern over `see`/`ref`/`amends`/`extends`) but does
+  not parse as one — e.g. a label containing a half-width square bracket —
+  previously produced **no edge and no finding**. It is now reported with the
+  file and line number, so silent non-edges are structurally impossible.
+  Deterministic, no model calls, detected at graph-load time.
+- `link-add` now refuses a target whose frontmatter title contains `[` or `]`
+  (exit non-zero, nothing written): the title is used verbatim as the link
+  label and would reproduce the malformed shape on every future link. Rename
+  the title or add the link manually.
+- Tests: exactly-one malformed finding with line-number assertion, edge/finding
+  count invariance against the baseline fixture, bracket-title refusal
+  including the bidirectional validate-before-write path.
+
+### Changed
+- `docs/usage.md` / `docs/usage.ja.md`: one-line pointer to `lineage` for
+  decision-evolution questions (kept in sync between the two languages).
+
+### Notes
+- The optional balanced-bracket label parser from #27 is deliberately **not**
+  implemented: with the lint catching every silent non-edge and `link-add`
+  refusing bracket titles, the failure mode is closed without growing the link
+  grammar. Revisit only if bracketed labels prove genuinely necessary.
+
 ## [1.17.0] - 2026-08-15
 
 ### Added

@@ -425,6 +425,81 @@ def test_link_add_typed_kind():
             {(s, d, k) for s, d, k, _r in edges}, edges
 
 
+ENTRY_F = "2026/07/20260704-100000-alice-malformed-f.md"
+ENTRY_G = "2026/07/20260705-100000-alice-bracket-g.md"
+
+
+def add_entry_f(root):
+    """One valid link plus exactly one malformed line (bracket in label)."""
+    with open(os.path.join(root, ENTRY_F), "w", encoding="utf-8") as f:
+        f.write(f"""---
+title: Malformed F
+created: 2026-07-04
+status: active
+tags: "#pitfall"
+---
+
+Body F.
+
+- see: [Topic A]({ENTRY_A}) — valid link
+- see: [tool [sect] guide]({ENTRY_B}) — bracket in label
+""")
+
+
+def test_lint_malformed_link_exactly_one_with_line_number():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        _n0, edges0, problems0 = kb_graph.load_graph(root)
+        add_entry_f(root)
+        nodes, edges, problems = kb_graph.load_graph(root)
+        mal = [(nid, det) for nid, chk, det in problems if chk == "malformed-link"]
+        # exactly one finding, on F, pointing at the malformed line (line 11)
+        assert len(mal) == 1 and mal[0][0] == ENTRY_F, mal
+        assert mal[0][1].startswith("line 11:"), mal
+        assert "[sect]" in mal[0][1], mal
+        # the valid F→A link is the only new edge; the malformed line adds none
+        pairs = {(s, d) for s, d, _k, _r in edges}
+        assert (ENTRY_F, ENTRY_A) in pairs, pairs
+        assert (ENTRY_F, ENTRY_B) not in pairs, pairs
+        assert len(edges) == len(edges0) + 1, (len(edges0), len(edges))
+        # no other finding changes
+        assert len(problems) == len(problems0) + 1, (problems0, problems)
+        # CLI surface: check name and exit code
+        res = run_cli(root, "--json", "lint")
+        assert res.returncode == 1, res.stdout
+        hits = [f for f in json.loads(res.stdout) if f["check"] == "malformed-link"]
+        assert [f["id"] for f in hits] == [ENTRY_F], hits
+
+
+def test_link_add_refuses_bracket_title():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        with open(os.path.join(root, ENTRY_G), "w", encoding="utf-8") as f:
+            f.write("""---
+title: Guide [draft]
+created: 2026-07-05
+status: active
+tags: "#pitfall"
+---
+
+Body G.
+
+## 関連
+
+""")
+        before = read(root, ENTRY_B)
+        res = run_cli(root, "link-add", "topic-b", "bracket-g", "--reason", "x")
+        assert res.returncode != 0, "bracket title must be refused"
+        assert "square bracket" in res.stderr, res.stderr
+        assert read(root, ENTRY_B) == before, "src file must be untouched"
+        # bidirectional validation must refuse before writing either side
+        before_g = read(root, ENTRY_G)
+        res = run_cli(root, "link-add", "bracket-g", "topic-b",
+                      "--reason", "x", "--bidirectional")
+        assert res.returncode != 0, res.stdout
+        assert read(root, ENTRY_G) == before_g and read(root, ENTRY_B) == before
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
