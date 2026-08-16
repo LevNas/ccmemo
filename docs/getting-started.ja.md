@@ -14,12 +14,39 @@
 
 ## 前提
 
-- [Claude Code](https://code.claude.com/docs/en/overview) CLI
-- `git`（エントリは Markdown ファイルとしてリポジトリにコミットします）
-- `rg`（[ripgrep](https://github.com/BurntSushi/ripgrep)）と `jq` と [`mecab`](https://taku910.github.io/mecab/): 毎プロンプトで関連エントリを自動提示するフックは、3つすべてが `PATH` にあるときだけ動きます（欠けていると**黙って何もしません**）。`rg` は `/recall-knowledge` の索引なしフォールバックの土台でもあります
-- 任意: `python3`（リンクグラフ CLI 用。オプトイン）
-- 任意: [`uv`](https://docs.astral.sh/uv/)（意味検索用の最短ランナー。オプトインで、`python3` + pip でも代替可。手順5参照）
-- 任意: [ghq](https://github.com/x-motemen/ghq)（後述のクローン配置を自動化）
+始めるのに必須なのは Claude Code と `git` だけです。各機能レイヤーは自分の道具の有無を確認し、無ければ**黙って休眠**します。使いたいレイヤーの分だけインストールしてください。
+
+| レイヤー | 提供するもの | 必要なツール | 無いとき |
+|---|---|---|---|
+| コアスキル | `/record-knowledge`・`/plan-task`・`/review-knowledge` | [Claude Code](https://code.claude.com/docs/en/overview)・`git` | — |
+| 安全網フックとグラフ CLI | 秘密情報の redaction・context guard・自動コミット（オプトイン）・タスクミラー・`kb_graph.py`（lint / `link-add` / `supersede` / `lineage`） | `python3`（3.10+。標準ライブラリのみで pip パッケージ不要） | フックは黙ってスキップ。グラフ CLI は使えない |
+| 毎プロンプトの自動検索 | 「関連ナレッジ候補」の自動注入 | `bash`・`jq`・[ripgrep](https://github.com/BurntSushi/ripgrep)（`rg`）・[`mecab`](https://taku910.github.io/mecab/)＋辞書 | フックは黙って何もしない。`rg` は `/recall-knowledge` の索引なしフォールバックの土台でもある |
+| 意味検索（手順5） | `/recall-knowledge` のベクトル検索 | [`uv`](https://docs.astral.sh/uv/)（最短）または `python3` + pip（`fastembed`・`sqlite-vec`）。初回のみ約 220MB のモデルをローカルに取得 | ripgrep のみの recall にフォールバック |
+
+いずれのレイヤーでも任意: [ghq](https://github.com/x-motemen/ghq)（後述のクローン配置を自動化）。
+
+### ツールのインストール
+
+Ubuntu / Debian（WSL 含む）:
+
+```bash
+sudo apt install python3 jq ripgrep mecab mecab-ipadic-utf8
+curl -LsSf https://astral.sh/uv/install.sh | sh   # 手順5を使う場合のみ
+```
+
+macOS（Homebrew）:
+
+```bash
+brew install python jq ripgrep mecab mecab-ipadic uv
+```
+
+自動検索フックはプロンプトを mecab で形態素解析するため、**辞書パッケージも必要**です（apt は `mecab-ipadic-utf8`、brew は `mecab-ipadic`）。mecab 本体だけでは動きません。
+
+### プラットフォーム対応状況
+
+- **Linux**（WSL2 含む）— 開発・常用プラットフォームで、上記すべてを検証済み。NixOS では意味検索レイヤーに既知の癖（numpy の `libstdc++` 解決）が1つありますが自動対処されます — [hybrid-search.md](hybrid-search.md)（英語）参照
+- **macOS** — 動作する見込み（依存はすべて Homebrew にあり、フックは素の bash/python3）ですが、定常的なテストはしていません。動作報告歓迎
+- **Windows（ネイティブ）** — 部分対応。コアスキルは動きます。python フックは `python3`（`python` ではなく）が `PATH` で解決する場合のみ動作し、自動検索フックは bash スクリプトのため Git Bash が必要です。mecab のネイティブ導入は現実的でないため、自動検索レイヤーは実質 Linux/macOS/WSL 専用です。Windows では **WSL でフルスタックを動かすのが推奨**です
 
 ## 手順1: リポジトリを配置する
 

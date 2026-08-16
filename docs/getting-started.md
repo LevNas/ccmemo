@@ -17,17 +17,54 @@ recall loop. The condensed version of this page is the README
 
 ## Prerequisites
 
-- [Claude Code](https://code.claude.com/docs/en/overview) CLI
-- `git` — entries are plain Markdown committed to your repositories
-- `rg` ([ripgrep](https://github.com/BurntSushi/ripgrep)), `jq`, and
-  [`mecab`](https://taku910.github.io/mecab/) — the hook that auto-surfaces
-  relevant entries on every prompt needs all three on `PATH` and **silently
-  does nothing** when one is missing; `rg` also backs `/recall-knowledge`'s
-  index-free fallback
-- Optional: `python3` for the link-graph CLI (opt-in)
-- Optional: [`uv`](https://docs.astral.sh/uv/) for semantic search (opt-in;
-  the simplest runner — `python3` + pip works too, see Step 5)
-- Optional: [ghq](https://github.com/x-motemen/ghq) for the clone layout below
+Nothing beyond Claude Code and `git` is *required* to start: every feature
+layer checks for its tools and **silently stays dormant** when they are
+missing. Install only the layers you want.
+
+| Layer | Powers | Tools | When absent |
+|---|---|---|---|
+| Core skills | `/record-knowledge`, `/plan-task`, `/review-knowledge` | [Claude Code](https://code.claude.com/docs/en/overview), `git` | — |
+| Safety hooks & graph CLI | secret redaction, context guard, opt-in auto-commit, tasks mirroring, `kb_graph.py` (lint / `link-add` / `supersede` / `lineage`) | `python3` (3.10+, stdlib only — no pip packages) | hooks skip silently; graph CLI unavailable |
+| Per-prompt auto-search | 関連ナレッジ候補 injected on every prompt | `bash`, `jq`, [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`), [`mecab`](https://taku910.github.io/mecab/) + a dictionary | hook silently does nothing; `rg` also backs `/recall-knowledge`'s index-free fallback |
+| Semantic search (Step 5) | vector recall in `/recall-knowledge` | [`uv`](https://docs.astral.sh/uv/) (simplest) or `python3` + pip (`fastembed`, `sqlite-vec`); ~220 MB one-time local model download | falls back to ripgrep-only recall |
+
+Optional either way: [ghq](https://github.com/x-motemen/ghq) for the clone
+layout below.
+
+### Installing the tools
+
+Ubuntu / Debian (including WSL):
+
+```bash
+sudo apt install python3 jq ripgrep mecab mecab-ipadic-utf8
+curl -LsSf https://astral.sh/uv/install.sh | sh   # only for Step 5
+```
+
+macOS (Homebrew):
+
+```bash
+brew install python jq ripgrep mecab mecab-ipadic uv
+```
+
+The auto-search hook tokenizes prompts with mecab, so it needs a dictionary
+package too (`mecab-ipadic-utf8` on apt, `mecab-ipadic` on brew) — mecab
+alone on `PATH` is not enough.
+
+### Platform support
+
+- **Linux** (including WSL2) — the development and daily-driver platform;
+  everything above is verified here. NixOS has one known quirk in the
+  semantic-search layer (`libstdc++` resolution for numpy), handled
+  automatically — see [hybrid-search.md](hybrid-search.md).
+- **macOS** — expected to work (every dependency is a Homebrew formula and
+  the hooks are plain bash/python3), but not regularly tested. Reports
+  welcome.
+- **Windows (native)** — partial. Core skills work. The python hooks run
+  only if `python3` (not just `python`) resolves on `PATH`, and the
+  auto-search hook is a bash script, so it needs Git Bash; mecab is
+  impractical to install natively, which makes the auto-search layer
+  effectively Linux/macOS/WSL-only. On Windows, WSL is the recommended way
+  to run the full stack.
 
 ## Step 1 — Lay out your repositories
 
