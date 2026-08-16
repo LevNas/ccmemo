@@ -18,8 +18,9 @@ picks up where you left off.
 - **`/plan-task`** — persist multi-step plans and progress across sessions,
   Git-tracked or issue-centric
 - **Link-graph CLI** — `scripts/kb_graph.py` answers structural questions (hubs,
-  neighborhoods, shortest link paths) and lints link integrity; pure stdlib,
-  pre-commit friendly
+  neighborhoods, shortest link paths), lints link integrity, and applies the
+  mechanical writes deterministically (`link-add` back-links, the `supersede`
+  change flow); pure stdlib, pre-commit friendly
 - **Context Guard** — hooks that defend against knowledge loss when the context
   is compacted
 - **Plain Markdown in git** — entries follow the same branch/merge/review workflow

@@ -62,6 +62,23 @@ pure stdlib, no index needed. The `lineage` subcommand follows the supersede
 chain from any entry to the one that currently holds the answer. Subcommands
 and pre-commit lint: [link-graph.md](link-graph.md).
 
+## Recording change (supersede)
+
+Knowledge changes. The recording skill picks the form with one question — may
+the old entry still be cited as current knowledge afterwards? Yes → edit in
+place, or add an `amends:`/`extends:` entry with the old one staying `active`;
+no → supersede it:
+
+```bash
+python3 scripts/kb_graph.py supersede <old-entry> <new-entry> --reason "what changed"
+```
+
+One validated step applies the `status: superseded` + `superseded_by:`
+frontmatter pair, a body-top warning banner, and an `amends:` back-link in
+the replacement. Non-active entries stop surfacing in the per-prompt
+auto-search (see Customization below), and `lineage` resolves any stale hit
+to the current authority. Details: [link-graph.md](link-graph.md).
+
 ## Reviewing knowledge
 
 `/review-knowledge` keeps the base healthy in three modes:

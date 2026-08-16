@@ -57,6 +57,16 @@ Python 標準ライブラリだけで動き、索引も要りません。
 `lineage` サブコマンドは、任意のエントリから置換（supersede）チェーンをたどり、いま答えを保持しているエントリまで到達します。
 サブコマンドと pre-commit lint は [link-graph.md](link-graph.md)（英語）にあります。
 
+## 変化を記録する（supersede）
+
+知識は変化します。記録スキルは一問で形を選びます — **旧エントリを今後も現行知識として参照してよいか？** Yes なら in-place 編集、または旧を `active` のまま `amends:`/`extends:` の新エントリを追加。No なら supersede します。
+
+```bash
+python3 scripts/kb_graph.py supersede <旧エントリ> <新エントリ> --reason "何が変わったか"
+```
+
+`status: superseded` + `superseded_by:` の frontmatter ペア、本文冒頭の警告バナー、置換側への `amends:` バックリンクを、全検証後に一括適用します。非 active エントリは毎プロンプトの自動検索に出なくなり（下記カスタマイズ参照）、古いヒットは `lineage` で現行エントリへ解決できます。詳細は [link-graph.md](link-graph.md)（英語）。
+
 ## ナレッジをレビューする
 
 `/review-knowledge` は3つのモードでナレッジベースの健全性を保ちます。
