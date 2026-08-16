@@ -51,6 +51,8 @@ Add new tags here. Reuse existing tags when possible.
 | `superseded` | Replaced by newer entry — follow `superseded_by` link |
 | `deprecated` | Obsolete, no longer relevant |
 
+Non-active entries carry a body-top warning banner so direct readers see the state first, e.g. `> **⚠ superseded (YYYY-MM-DD)** — current: [replacement title](YYYY/MM/slug.md)`.
+
 ### Type
 | Type | Meaning |
 |------|---------|

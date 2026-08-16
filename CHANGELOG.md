@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.20.0] - 2026-08-16
+
+### Added
+- `supersede <old> <new>` subcommand in `scripts/kb_graph.py`: the Change Flow
+  in one validated step — sets the `status: superseded` + `superseded_by:`
+  frontmatter pair, inserts a body-top warning banner
+  (`> **⚠ superseded (date)** — current: [title](id)`), and appends an
+  `- amends:` back-link to the replacement via the `link-add` machinery
+  (skipped when the replacement already links the old entry). Everything is
+  validated before anything is written (no partial application), re-running
+  completes an interrupted run, and self-supersede, conflicting successors,
+  supersede cycles, bracketed replacement titles and anchor-less replacements
+  are refused loudly. `--date` and `--dry-run` supported.
+- Tests: eight new checks in `tests/test_kb_graph.py` covering the frontmatter
+  pair, banner placement, back-link, lint-cleanliness of the result,
+  idempotent re-run and self-healing, cycle/conflict refusal, atomicity
+  without an anchor, dry-run, and bracket-title refusal.
+
+### Changed
+- `record-knowledge` procedure: the Correction Flow is generalized to a
+  **Change Flow** — supersede now explicitly covers evolved understanding, not
+  just corrections — and the Amendment Rules gained a decision table for
+  in-place edit vs `amends:`/`extends:` entry vs supersede, keyed on one
+  question: may the old entry still be cited as current knowledge afterwards?
+- Warning-banner convention documented for non-active entries (body-top
+  blockquote; deliberately not a list-form link so the lineage is not
+  double-booked as a graph edge), in the procedure and both distributed
+  `CLAUDE.md` templates. The banner is a human aid — machine paths already
+  respect `status` since 1.19.0.
+- `docs/link-graph.md`: `supersede` documented alongside `link-add`.
+
 ## [1.19.0] - 2026-08-16
 
 ### Fixed

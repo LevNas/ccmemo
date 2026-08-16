@@ -500,6 +500,118 @@ Body G.
         assert read(root, ENTRY_G) == before_g and read(root, ENTRY_B) == before
 
 
+def test_supersede_marks_frontmatter_banner_and_backlink():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        add_entry_e(root)
+        res = run_cli(root, "supersede", "topic-a", "section-only-e",
+                      "--reason", "replaced by consolidated entry",
+                      "--date", "2026-08-16")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        text_a = read(root, ENTRY_A)
+        # status/superseded_by as an adjacent frontmatter pair, old status gone
+        assert f"status: superseded\nsuperseded_by: {ENTRY_E}\n" in text_a, text_a
+        assert "status: active" not in text_a, text_a
+        # banner directly under the closing frontmatter delimiter
+        banner = (f"> **⚠ superseded (2026-08-16)** — current: "
+                  f"[Section Only E]({ENTRY_E})")
+        assert f"---\n\n{banner}\n" in text_a, text_a
+        # amends back-link appended to the replacement (heading anchor)
+        line = f"- amends: [Topic A]({ENTRY_A}) — replaced by consolidated entry"
+        assert line in read(root, ENTRY_E), read(root, ENTRY_E)
+        # the result must not trip any supersede lint check
+        res = run_cli(root, "lint")
+        assert "superseded-" not in res.stdout and "supersede-" not in res.stdout, res.stdout
+
+
+def test_supersede_existing_see_link_counts_as_backlink():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        # fixture B already carries "- see: [Topic A]" -> no amends duplicate
+        before_b = read(root, ENTRY_B)
+        res = run_cli(root, "supersede", "topic-a", "topic-b",
+                      "--reason", "r", "--date", "2026-08-16")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        assert "already linked" in res.stdout, res.stdout
+        assert read(root, ENTRY_B) == before_b, "no near-duplicate link line"
+        assert "status: superseded" in read(root, ENTRY_A)
+
+
+def test_supersede_is_idempotent_and_self_healing():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        add_entry_e(root)
+        args = ("supersede", "topic-a", "section-only-e",
+                "--reason", "r", "--date", "2026-08-16")
+        assert run_cli(root, *args).returncode == 0
+        after_a, after_e = read(root, ENTRY_A), read(root, ENTRY_E)
+        # full rerun: recognised, nothing rewritten
+        res = run_cli(root, *args)
+        assert res.returncode == 0 and "already superseded" in res.stdout, res.stdout
+        assert read(root, ENTRY_A) == after_a and read(root, ENTRY_E) == after_e
+        # interrupted-run repair: back-link missing -> only that piece is redone
+        stripped = "\n".join(l for l in after_e.splitlines()
+                             if "- amends:" not in l) + "\n"
+        with open(os.path.join(root, ENTRY_E), "w", encoding="utf-8") as f:
+            f.write(stripped)
+        res = run_cli(root, *args)
+        assert res.returncode == 0 and "back-linked" in res.stdout, res.stdout
+        assert read(root, ENTRY_A) == after_a, "old entry must stay untouched"
+        assert read(root, ENTRY_E).count("- amends:") == 1
+
+
+def test_supersede_refuses_cycle_and_conflicting_successor():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        assert run_cli(root, "supersede", "topic-a", "topic-b",
+                       "--reason", "r", "--date", "2026-08-16").returncode == 0
+        # reverse direction would close a cycle
+        res = run_cli(root, "supersede", "topic-b", "topic-a",
+                      "--reason", "r", "--date", "2026-08-16")
+        assert res.returncode != 0 and "cycle" in res.stderr, res.stderr
+        # a second, different successor must not silently overwrite the first
+        before_a = read(root, ENTRY_A)
+        res = run_cli(root, "supersede", "topic-a", "orphan-c",
+                      "--reason", "r", "--date", "2026-08-16")
+        assert res.returncode != 0 and "already superseded by" in res.stderr, res.stderr
+        assert read(root, ENTRY_A) == before_a
+
+
+def test_supersede_no_partial_application_without_backlink_anchor():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        before_a = read(root, ENTRY_A)
+        # orphan-c has no link line and no 関連 heading -> back-link cannot be
+        # planned -> the old entry must not be written either
+        res = run_cli(root, "supersede", "topic-a", "orphan-c",
+                      "--reason", "r", "--date", "2026-08-16")
+        assert res.returncode != 0 and "manually" in res.stderr, res.stderr
+        assert read(root, ENTRY_A) == before_a, "no partial application"
+
+
+def test_supersede_dry_run_writes_nothing():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        before_a, before_b = read(root, ENTRY_A), read(root, ENTRY_B)
+        res = run_cli(root, "supersede", "topic-a", "topic-b",
+                      "--reason", "r", "--date", "2026-08-16", "--dry-run")
+        assert res.returncode == 0 and "dry-run" in res.stdout, res.stdout
+        assert read(root, ENTRY_A) == before_a and read(root, ENTRY_B) == before_b
+
+
+def test_supersede_refuses_bracket_replacement_title():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        with open(os.path.join(root, ENTRY_G), "w", encoding="utf-8") as f:
+            f.write('---\ntitle: Guide [draft]\ncreated: 2026-07-05\n'
+                    'status: active\ntags: "#pitfall"\n---\n\nBody G.\n\n## 関連\n\n')
+        before_a = read(root, ENTRY_A)
+        res = run_cli(root, "supersede", "topic-a", "bracket-g",
+                      "--reason", "r", "--date", "2026-08-16")
+        assert res.returncode != 0 and "square bracket" in res.stderr, res.stderr
+        assert read(root, ENTRY_A) == before_a
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

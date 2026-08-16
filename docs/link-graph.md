@@ -38,6 +38,7 @@ python3 scripts/kb_graph.py neighborhood <entry> --depth 2
 python3 scripts/kb_graph.py path <entry-a> <entry-b> # shortest link path
 python3 scripts/kb_graph.py lineage <entry>          # supersede chain → current authority
 python3 scripts/kb_graph.py link-add <src> <dst> --reason "why"  # deterministic writer
+python3 scripts/kb_graph.py supersede <old> <new> --reason "what changed"  # change flow
 python3 scripts/kb_graph.py lint                     # exit 1 on findings
 ```
 
@@ -76,6 +77,22 @@ so the caller can fall back to a manual edit. `--kind see|ref|amends|extends`
 either file; `--dry-run` prints the planned insertion. A target whose
 frontmatter title contains a square bracket is refused — the label would not
 parse back as a link (see `malformed-link`); rename the title instead.
+
+### `supersede <old> <new> --reason "..."`
+
+The Change Flow in one validated step: marks `old` as replaced by `new`. Sets
+the `status: superseded` + `superseded_by:` frontmatter pair on the old entry,
+inserts a body-top warning banner
+(`> **⚠ superseded (date)** — current: [title](id)`, `--date` overrides
+today), and appends an `- amends:` back-link to the replacement via the
+`link-add` machinery (skipped when the replacement already links the old
+entry). Every piece is validated before anything is written; the command is
+idempotent, so re-running completes an interrupted run and a fully applied
+state is reported as `already superseded`. Refused loudly: self-supersede, a
+conflicting existing successor, a supersede cycle, a bracketed replacement
+title, and a replacement with no link anchor (`--dry-run` previews). The
+banner is a blockquote on purpose — a list-form line would double-book the
+lineage as a graph edge.
 
 ### `lint [files...]`
 
@@ -128,8 +145,9 @@ by `lint` but are not part of the entry graph.
 ## How the skills use it
 
 - **`/record-knowledge`** — backlinks (step 7) and typed links are written with
-  `link-add` instead of hand-editing entry files; the Correction Flow's
-  successor-side back-link is an `amends:` link.
+  `link-add` instead of hand-editing entry files; the Change Flow's
+  frontmatter pair, banner and successor-side `amends:` back-link are applied
+  with `supersede`.
 - **`/recall-knowledge`** — multi-hop recalls (tracing how a decision evolved,
   connecting two topics, mapping an area) query `neighborhood` / `path` first
   and read only the endpoint entries, instead of chaining
