@@ -108,6 +108,13 @@ entries before starting work. Patterns and examples:
   to commit with a warning instead). It complements — does not replace — your
   manual end-of-session commit, so it is a no-op when you have already
   committed.
+- **Auto-search status filter** — the per-prompt `UserPromptSubmit` hook only
+  injects entries whose frontmatter `status` is `active` (entries without a
+  `status:` line count as active). Set `CCMEMO_SEARCH_STATUS` to a
+  comma-separated allowlist (e.g. `active,superseded`) to widen it, or to
+  `all` to disable filtering; non-active entries surfaced that way are
+  annotated with `[status: …, superseded_by: …]` so they cannot be mistaken
+  for current knowledge.
 
 ## Why keep it in a Git repository
 

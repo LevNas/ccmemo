@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.19.0] - 2026-08-16
+
+### Fixed
+- The per-prompt auto-search hook (`hooks/userpromptsubmit_knowledge_search.sh`)
+  now respects frontmatter `status`: `superseded` / `deprecated` entries are
+  no longer injected as current knowledge. Entries
+  without a `status:` line keep surfacing (treated as `active`), the field is
+  read from the frontmatter block only (a body line starting with `status:`
+  cannot leak in), and filtered-out entries do not consume result slots — the
+  hook walks the ranking until `MAX_RESULTS` allowed entries are collected.
+  `kb_search.py --status` and the entry templates already treated non-active
+  entries as reference-only; the always-on injection path was the one place
+  that ignored it.
+- A title-less entry file no longer aborts the whole hook (`rg` exiting 1
+  under `pipefail` made the `basename` fallback unreachable).
+
+### Added
+- `CCMEMO_SEARCH_STATUS`: comma-separated allowlist of statuses the auto-search
+  hook may surface (default `active`; `all` disables filtering). Non-active
+  entries deliberately surfaced this way are annotated with
+  `[status: …, superseded_by: …]` so the reader sees they are not current.
+- Tests: `tests/test_knowledge_search_hook.py` — runs the hook end-to-end with
+  a stubbed `mecab`; covers default exclusion, missing-status fallback,
+  allowlist widening with annotation, `all`, slot preservation after
+  filtering, and frontmatter-only field extraction.
+
 ## [1.18.0] - 2026-08-16
 
 ### Added
