@@ -53,6 +53,12 @@ SENSITIVE_KEYS = (
 # mangling the surrounding text. Matching only the URI charset and requiring
 # the match to end on an alphanumeric stops it at quotes, brackets, CJK text
 # and trailing punctuation.
+# Accepted differential vs the TS SPEC: a NON-canonical reference containing
+# a char outside the charset (e.g. a raw comma in an item name) is masked
+# only up to that char and the tail survives. The tail can only be an
+# item-name fragment — raw 26-char item/vault IDs are single segments fully
+# inside the charset, so an ID is always masked whole. Canonical references
+# percent-encode such chars (% is in the charset) and are unaffected.
 OP_REF = re.compile(r"\bop://[A-Za-z0-9._~%/-]*[A-Za-z0-9]", re.IGNORECASE)
 JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
@@ -77,7 +83,10 @@ ENTRY_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # 1Password item/vault IDs are 26-char lowercase alphanumeric strings. Item
 # NAME references (op://vault/item-name/field) carry no secret value, and a
 # host policy may explicitly allow them (CCMEMO_REDACT_OP_REF=keep-names).
-_OP_RAW_ID = re.compile(r"^[a-z0-9]{26}$")
+# IGNORECASE mirrors OP_REF: the reference itself matches case-insensitively,
+# so the raw-ID gate must too — otherwise an upper-cased raw ID would slip
+# through keep-names (case parser-differential).
+_OP_RAW_ID = re.compile(r"^[a-z0-9]{26}$", re.IGNORECASE)
 
 
 def _op_ref_contains_raw_id(ref: str) -> bool:

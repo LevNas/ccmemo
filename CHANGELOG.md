@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.21.1] - 2026-08-16
+
+### Fixed
+- The keep-names raw-ID gate is now case-insensitive, mirroring `OP_REF`: an
+  upper-cased raw 26-char item/vault ID inside an `op://` reference no longer
+  slips through `CCMEMO_REDACT_OP_REF=keep-names` (case parser-differential
+  flagged by security review of the 1.21.0 change).
+
+### Changed
+- The accepted differential vs the shared TS SPEC pattern is documented at
+  the `OP_REF` definition: a NON-canonical reference containing a character
+  outside the URI charset is masked only up to that character, and the
+  surviving tail can only be an item-name fragment — raw IDs are single
+  in-charset segments and are always masked whole; canonical references
+  percent-encode such characters and are unaffected.
+- Docs now name 1Password explicitly for the `op://` bullets: the pattern is
+  scoped to 1Password's secret-reference URI scheme and is inert for
+  knowledge bases that do not use it.
+
 ## [1.21.0] - 2026-08-16
 
 ### Fixed
