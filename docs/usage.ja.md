@@ -96,6 +96,7 @@ python3 scripts/kb_graph.py supersede <旧エントリ> <新エントリ> --reas
 - **自動コミット（オプトイン、既定はオフ）**：`CCMEMO_AUTOCOMMIT=1` を設定すると、セーフティネットのフックがセッション終了時（`SessionEnd`）と compaction の前（`PreCompact`）に、`.claude/knowledge/` と `.claude/tasks/` の変更だけをコミットします。`git add -A` は実行せず、push もしません。漏えいしやすい形が差分に含まれる場合は leak-scan ゲートがコミットを止めます（`CCMEMO_AUTOCOMMIT_ON_LEAK=warn` にすると警告つきでコミットします）。これは手動のセッション終了コミットの置き換えではなく補完なので、すでにコミット済みなら何もしません。
 - **redact フックの `op://` の扱い**：エントリの redact フックは既定で `op://` 参照（1Password の secret reference URI。1Password を使わないナレッジベースでは不活性）をすべてマスクします。`CCMEMO_REDACT_OP_REF=keep-names` を設定すると、項目名参照（`op://vault/項目名/field`。秘密の実値を含まない）は残し、26 文字の生 ID 形式セグメントを含む参照だけをマスクします。
 - **自動検索の status フィルタ**：毎プロンプトの `UserPromptSubmit` フックは、frontmatter の `status` が `active` のエントリだけを注入します（`status:` 行が無いエントリは active 扱い）。`CCMEMO_SEARCH_STATUS` にカンマ区切りの許可リスト（例：`active,superseded`）を設定すると広げられ、`all` でフィルタを無効化できます。この経路で表に出た非 active エントリには `[status: …, superseded_by: …]` の注記が付くため、現行の知識と取り違えることはありません。
+- **context-guard の nudge 調整**：セッションの transcript が `CCMEMO_CONTEXT_GUARD_THRESHOLD_KB`（既定 300）を超え、かつ直近 `CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN` 分（既定 45）にナレッジエントリの書込が無いとき、Stop フックが終了前に一度だけ記録を促します。重いセッションで鳴りすぎる場合は閾値を上げてください。コンテキスト窓に対する閾値の目安は [architecture.md](architecture.md)（Context Guard → Configuration、英語）にあります。
 
 ## Git リポジトリに置く理由
 
