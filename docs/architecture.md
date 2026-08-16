@@ -149,3 +149,32 @@ export CCMEMO_CONTEXT_GUARD_THRESHOLD_KB=500  # default: 300
 
 Remove or comment out the relevant entry in `hooks/hooks.json`, or delete the
 `hooks/` directory.
+
+## Entry Redaction & Leak Scan
+
+`postwrite_redact_entries.py` runs after every Write/Edit on a knowledge entry
+(`.claude/knowledge/entries/**.md`) and enforces a shared redact/leak-scan SPEC
+deterministically, so recording does not rely on the model remembering to
+sanitize. Hybrid behaviour (chosen 2026-06-21):
+
+- **Unambiguous secret values** — `op://` references (1Password
+  secret-reference URIs), JWTs, PEM private-key headers, GitHub tokens,
+  non-noreply emails — are masked in place with `‹redacted›`.
+- **Leak-prone shapes** — UUIDs, home paths, `${…}`, base64-ish strings,
+  private repo names (`CCMEMO_PRIVATE_REPO_NAMES`) — are reported as warnings
+  only; masking them correctly needs human context (placeholdering), so the
+  hook prompts instead of clobbering.
+
+The pattern set lives in `hooks/lib/redact.py` and mirrors a TypeScript
+counterpart — the two implementations share the SPEC, not the code. One
+deliberate deviation: the `op://` pattern matches only the URI charset and
+must end on an alphanumeric, so it cannot swallow a closing quote, backtick
+or paren adjacent to a reference (CHANGELOG 1.21.0/1.21.1 has the full
+rationale, including the accepted non-canonical-tail differential).
+
+`CCMEMO_REDACT_OP_REF=keep-names` narrows the `op://` masking to references
+containing a raw 26-character item/vault ID segment, keeping item-name
+references, which carry no secret value. Default: every reference is masked.
+The same `redact`/`leak_scan` modules also gate the opt-in auto-commit
+(`CCMEMO_AUTOCOMMIT`): a safety-net commit is blocked while the staged diff
+contains leak-prone shapes.
