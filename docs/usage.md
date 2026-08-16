@@ -58,8 +58,9 @@ when the index is absent. Setup: [hybrid-search.md](hybrid-search.md).
 
 For multi-hop questions ("how did this decision evolve", "how do X and Y
 connect"), `scripts/kb_graph.py` queries the `see:`-link graph directly —
-pure stdlib, no index needed. Subcommands and pre-commit lint:
-[link-graph.md](link-graph.md).
+pure stdlib, no index needed. The `lineage` subcommand follows the supersede
+chain from any entry to the one that currently holds the answer. Subcommands
+and pre-commit lint: [link-graph.md](link-graph.md).
 
 ## Reviewing knowledge
 
