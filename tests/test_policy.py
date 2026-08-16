@@ -148,6 +148,20 @@ def test_redact_op_ref_keep_names_mode():
     assert hits2 == [("op-ref", 2)], hits2
 
 
+def test_redact_op_ref_keep_names_case_and_noncanonical_tail():
+    # OP_REF matches case-insensitively; the raw-ID gate must too, or an
+    # upper-cased raw ID slips through keep-names (case parser-differential).
+    up = "OP://PERSONAL/ABCDEFGHIJKLMNOPQRSTUVWXYZ/TOKEN"
+    out, hits = redact.redact_secrets_in_text(f"x {up} y", op_ref_mode="keep-names")
+    assert up not in out and hits == [("op-ref", 1)], (out, hits)
+    # Accepted differential vs the TS SPEC (documented at OP_REF): a
+    # non-canonical ref with a raw comma is masked only up to the comma; the
+    # surviving tail can only be an item-name fragment, never a raw ID.
+    odd = "op://Personal/abc,defsegment/field"
+    out2, _ = redact.redact_secrets_in_text(f"x {odd} y")
+    assert f"{PH},defsegment/field" in out2, out2
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
