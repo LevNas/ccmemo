@@ -41,6 +41,11 @@ any of them by name.
 
 That alone makes the four skills available and wires up the
 [Context Guard](docs/architecture.md#context-guard-since-v110) hooks.
+External tools (`python3`, `jq`/`ripgrep`/`mecab`, `uv`) unlock further
+layers and every layer stays silently dormant without them — install
+commands and platform support (Linux verified; macOS expected; Windows
+partial, WSL recommended) are in
+[getting-started → Prerequisites](docs/getting-started.md#prerequisites).
 
 **2. Scaffold the starter config** — a tag registry for knowledge and an index
 for tasks. Easiest is to just ask Claude Code:
