@@ -144,6 +144,24 @@ entries before starting work. Patterns and examples:
   nudge fires too often on heavy sessions, raise the threshold — sizing
   guidance for bounded context windows is in
   [architecture.md](architecture.md) (Context Guard → Configuration).
+- **Several checkouts in git-tracked mode** — linked worktrees or clones on
+  other machines each append to a same-named `context-*.md`, so the copies
+  diverge and `git pull` refuses or a rebase conflicts
+  ([#24](https://github.com/LevNas/ccmemo/issues/24); nothing is lost). To
+  prevent it, set `CCMEMO_CAPTURE_CHECKOUT_SUFFIX=1` (opt-in, off by default)
+  in every checkout: capture files are then named
+  `context-<timestamp>-session-<id8>.md` and each checkout appends only to
+  its own. `<id8>` is a one-way hash of hostname + checkout path — neither
+  value itself appears anywhere. To recover a file that already diverged
+  (captures, or the `see:` block of a hub entry), run
+  `python3 scripts/kb_graph.py union-recover <file>` on a file conflicted by
+  a merge/rebase, or add `--theirs origin/main` for uncommitted local
+  changes. It unions only when both sides are append-only, verifies that no
+  line was lost, backs the file up first, and supports `--dry-run`;
+  frontmatter rewrites and body edits are refused (resolve those by hand),
+  and duplicate `see:` links left by a union are reported by `lint`. Details:
+  [architecture.md](architecture.md#multiple-checkouts-in-git-tracked-mode-issue-24),
+  [link-graph.md](link-graph.md#union-recover-file---theirs-ref).
 
 ## Why keep it in a Git repository
 

@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.23.0] - 2026-09-21
+
+Two mitigations for the known multi-checkout divergence in git-tracked mode
+(#24): capture files and hub-entry backlinks edited concurrently in several
+checkouts of one repository.
+
+### Added
+- `CCMEMO_CAPTURE_CHECKOUT_SUFFIX=1` (opt-in, off by default): the
+  PostToolUse context writer names new capture files
+  `context-<YYYYMMDD-HHMMSS>-session-<id8>.md` and reuses only today's
+  unconsumed file ending in its own `<id8>`, so checkouts never append to each
+  other's captures. `<id8>` is the first 8 hex digits of
+  `sha256(hostname + NUL + realpath(git toplevel))` (realpath of the working
+  directory outside git) from the new `hooks/lib/checkout_id.py`; the hostname
+  and the path themselves never reach a filename, file body or log line.
+  Without the variable, naming and reuse are unchanged.
+- `kb_graph.py union-recover <file> [--theirs <ref>] [--dry-run]`: automates
+  the lossless union recovery documented in #24, for a file conflicted by a
+  merge/rebase (index stages 1/2/3) or for uncommitted local changes vs a ref
+  (common ancestor = merge-base). It writes only when both sides are
+  append-only against the ancestor (zero deleted or rewritten lines — so
+  frontmatter rewrites and body edits of knowledge entries are refused with
+  the reason and a non-zero exit), verifies that every line of every source
+  survived, backs the previous file up under the git dir, and never touches
+  the index. Re-running on an already-unioned file is a no-op. Duplicate
+  `see:` links a union can leave behind are reported by the existing `lint`
+  check `duplicate-link`.
+- Tests: `tests/test_checkout_id.py` (digest, git-toplevel/cwd fallback,
+  unchanged default behavior, own-file-only reuse, no hostname/path leakage)
+  and `tests/test_union_recover.py` (both situations end to end through
+  `rebase --continue`, dry-run, backup, and the edit-vs-edit refusals).
+- Docs: `docs/architecture.md` (Context Guard → Multiple checkouts in
+  git-tracked mode), `docs/link-graph.md` (`union-recover`), and a
+  customization bullet in `docs/usage.md` / `docs/usage.ja.md`.
+
 ## [1.22.0] - 2026-08-17
 
 ### Fixed

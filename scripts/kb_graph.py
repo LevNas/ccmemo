@@ -14,6 +14,9 @@ Subcommands:
   supersede <old> <new>  mark old as replaced by new: frontmatter pair,
                          body-top banner, amends back-link — in one atomic step
   lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings)
+  union-recover <file>   lossless union of two append-only copies of one file
+                         that diverged across checkouts (captures, hub-entry
+                         see: blocks) — verified, refuses anything else
 
 Edge kinds:
   see / ref              untyped association (list links, unchanged)
@@ -46,6 +49,17 @@ non-zero on any ambiguity so the caller can fall back to a manual edit.
 With --bidirectional both directions are validated before either file is
 written (no partial application).
 
+union-recover automates the recovery documented in issue #24. It handles a
+file left conflicted by a merge/rebase (index stages 1/2/3) or, with
+--theirs <ref>, uncommitted local changes vs that ref (common ancestor =
+merge-base). Both sides must be append-only against the ancestor — zero
+deleted or rewritten lines — otherwise nothing is written and the exit code
+is non-zero: frontmatter rewrites (updated:, status:) and body corrections
+are edit-vs-edit and need a human to pick a side. The result is checked to
+contain every line of every source, the previous file is backed up under
+the git dir first, and --dry-run writes nothing. A see: link added on both
+sides can survive twice; `lint` reports that as duplicate-link.
+
 Entries are addressed by unique filename substring. `--json` gives
 machine-readable output. `--root` points at the entries dir
 (default: .claude/knowledge/entries).
@@ -62,6 +76,8 @@ import datetime
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 from collections import deque
@@ -617,6 +633,186 @@ def cmd_supersede(root, nodes, edges, args):
             print(message)
 
 
+class UnionRefused(Exception):
+    """union-recover precondition failure: nothing may be written."""
+
+
+def _git_out(cwd, *args):
+    """Run git in cwd; return stdout text, or None on any failure."""
+    try:
+        out = subprocess.run(["git", "-C", cwd, *args],
+                             capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        return out.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _insertions(base, side):
+    """Align base as a subsequence of side (both line lists).
+
+    Returns {gap: [inserted lines]} where gap i sits before base[i] and
+    gap len(base) is the end of file, or None when side is not append-only
+    against base (some base line was deleted or rewritten).
+    """
+    gaps, i = {}, 0
+    for line in side:
+        if i < len(base) and line == base[i]:
+            i += 1
+        else:
+            gaps.setdefault(i, []).append(line)
+    return gaps if i == len(base) else None
+
+
+def _is_subsequence(needle, haystack):
+    it = iter(haystack)
+    return all(any(line == h for h in it) for line in needle)
+
+
+def _first_lost_line(base, side):
+    """1-based number and text of the first base line missing from side."""
+    i = 0
+    for line in side:
+        if i < len(base) and line == base[i]:
+            i += 1
+    return i + 1, base[i]
+
+
+def union_lines(base, first, second, first_name="ours", second_name="theirs"):
+    """Union two append-only descendants of base; first's additions lead.
+
+    Raises UnionRefused unless both sides are append-only. When one side's
+    addition at a position wholly contains the other's (identical blocks, or
+    a side that already is an earlier union), the containing block is kept
+    once — this makes re-running on an already-unioned file a no-op. Any
+    other overlap is kept from both.
+    """
+    plans = []
+    for name, side in ((first_name, first), (second_name, second)):
+        gaps = _insertions(base, side)
+        if gaps is None:
+            lineno, text = _first_lost_line(base, side)
+            raise UnionRefused(
+                f"{name} is not append-only: common-ancestor line {lineno} "
+                f"was deleted or rewritten ({text.strip()[:60]!r}) — this is "
+                "edit-vs-edit, resolve it by hand")
+        plans.append(gaps)
+    a, b = plans
+    merged = []
+    for i in range(len(base) + 1):
+        ins_a, ins_b = a.get(i, []), b.get(i, [])
+        if _is_subsequence(ins_a, ins_b):
+            merged.extend(ins_b)
+        elif _is_subsequence(ins_b, ins_a):
+            merged.extend(ins_a)
+        else:
+            merged.extend(ins_a + ins_b)
+        if i < len(base):
+            merged.append(base[i])
+    for name, source in (("the common ancestor", base), (first_name, first),
+                         (second_name, second)):
+        if not _is_subsequence(source, merged):
+            raise UnionRefused(
+                f"internal check failed: the union would lose lines of {name}")
+    return merged
+
+
+def _split_text(name, text):
+    if text is None:
+        raise UnionRefused(f"cannot read {name} (missing, binary, or not UTF-8)")
+    if "\r" in text:
+        raise UnionRefused(f"{name} has CR line endings — not supported")
+    return text.splitlines()
+
+
+def cmd_union_recover(args):
+    path = os.path.abspath(args.file)
+    if not os.path.isfile(path):
+        sys.exit(f"error: no such file: {args.file}")
+    top = _git_out(os.path.dirname(path), "rev-parse", "--show-toplevel")
+    if top is None:
+        sys.exit("error: not inside a git work tree")
+    top = os.path.realpath(top.strip())
+    rel = os.path.relpath(os.path.realpath(path), top).replace(os.sep, "/")
+
+    unmerged = _git_out(top, "ls-files", "-u", "--", rel) or ""
+    stages = {line.split()[2] for line in unmerged.splitlines()}
+    try:
+        if stages:
+            if args.theirs:
+                raise UnionRefused(
+                    "the file is conflicted in the index — drop --theirs to "
+                    "recover from stages 1/2/3")
+            if stages != {"1", "2", "3"}:
+                raise UnionRefused(
+                    "the conflict lacks a common-ancestor or side stage "
+                    "(add/add or delete) — no base to verify append-only against")
+            mode = "conflict (index stages 1/2/3)"
+            base, first, second = (
+                _split_text(f"stage {n}", _git_out(top, "show", f":{n}:{rel}"))
+                for n in ("1", "2", "3"))
+            names = ("ours (stage 2)", "theirs (stage 3)")
+        else:
+            if not args.theirs:
+                raise UnionRefused(
+                    "the file is not conflicted — pass --theirs <ref> to union "
+                    "local changes with that ref")
+            mb = _git_out(top, "merge-base", "HEAD", args.theirs)
+            if mb is None:
+                raise UnionRefused(f"no merge-base between HEAD and {args.theirs}")
+            mb = mb.strip()
+            mode = f"local vs {args.theirs} (merge-base {mb[:12]})"
+            base = _split_text("the common ancestor's copy",
+                               _git_out(top, "show", f"{mb}:{rel}"))
+            first = _split_text(f"the copy at {args.theirs}",
+                                _git_out(top, "show", f"{args.theirs}:{rel}"))
+            try:
+                with open(path, encoding="utf-8") as f:
+                    local = f.read()
+            except (OSError, UnicodeDecodeError):
+                local = None
+            second = _split_text("the local file", local)
+            # theirs leads, as in the documented manual procedure: the result
+            # reads as "pulled first, local additions after".
+            names = (f"theirs ({args.theirs})", "local")
+        merged = union_lines(base, first, second, *names)
+    except UnionRefused as exc:
+        sys.exit(f"refused (nothing written): {exc}")
+
+    new_text = "".join(line + "\n" for line in merged)
+    summary = (f"{rel}: {mode}\n"
+               f"  +{len(first) - len(base)} lines from {names[0]}, "
+               f"+{len(second) - len(base)} from {names[1]} "
+               f"-> {len(merged)} lines; append-only verified, no line lost")
+    if args.dry_run:
+        print(f"dry-run: would union {summary}")
+        return
+
+    backup_dir = _git_out(top, "rev-parse", "--git-path", "ccmemo-union-recover")
+    if backup_dir is None:
+        sys.exit("error: cannot locate the git dir for the backup — nothing written")
+    backup_dir = os.path.join(top, backup_dir.strip())
+    os.makedirs(backup_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = os.path.join(backup_dir, f"{stamp}-{os.path.basename(path)}")
+    shutil.copy2(path, backup)
+    _write_atomic(path, new_text)
+    print(f"unioned {summary}")
+    print(f"  backup of the previous file: {backup}")
+    if stages:
+        print(f"  next: review, `git add {rel}`, then continue the merge/rebase")
+    else:
+        print("  next: review, commit, then pull --rebase; git still reports "
+              f"this file as conflicted there — re-run `union-recover {rel}` "
+              "(a no-op union of the same lines), `git add` it and continue")
+    print("  knowledge entries: run `lint` afterwards — a link added on both "
+          "sides shows up as duplicate-link")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--root", default=".claude/knowledge/entries",
@@ -658,7 +854,32 @@ def main():
                     help="limit findings to these files (e.g. staged entries)")
     li.add_argument("--registry", default=None,
                     help="tag registry markdown (default: <root>/../CLAUDE.md)")
+    ur = sub.add_parser(
+        "union-recover",
+        help="lossless union of two append-only copies of one file (issue #24)",
+        description=(
+            "Union a file that diverged across checkouts. Without --theirs the "
+            "file must be conflicted by a merge/rebase (index stages 1/2/3 are "
+            "used); with --theirs <ref> the uncommitted local copy is unioned "
+            "with that ref (common ancestor = merge-base). Both sides must be "
+            "append-only against the ancestor, otherwise nothing is written "
+            "and the exit code is non-zero — frontmatter rewrites (updated:, "
+            "status:) and body corrections are edit-vs-edit: pick a side by "
+            "hand. The previous file is backed up under the git dir. A see: "
+            "link added on both sides may remain twice: run `lint` afterwards, "
+            "it reports duplicate-link."))
+    ur.add_argument("file", help="path of the diverged file")
+    ur.add_argument("--theirs", default=None, metavar="REF",
+                    help="union uncommitted local changes with this ref "
+                         "(e.g. origin/main after `git fetch`)")
+    ur.add_argument("--dry-run", action="store_true",
+                    help="verify and report without writing")
     args = p.parse_args()
+
+    if args.cmd == "union-recover":
+        # file-level git recovery: needs no entry graph (or any KB at all)
+        cmd_union_recover(args)
+        return
 
     nodes, edges, problems = load_graph(args.root)
     if not nodes:

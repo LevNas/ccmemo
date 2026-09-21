@@ -115,7 +115,7 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 
 Captures detailed working context that is too granular for plan-vN.md but essential for resuming work after compaction or across sessions. Each file represents a focused context segment.
 
-**Naming**: `context-YYYYMMDD-HHMMSS-topic.md`
+**Naming**: `context-YYYYMMDD-HHMMSS-topic.md`. Files the capture hook creates use the topic `session`, or `session-<id8>` when `CCMEMO_CAPTURE_CHECKOUT_SUFFIX=1` (`<id8>` = opaque per-checkout hash; files with another checkout's `<id8>` belong to that checkout — read them, but do not append to them).
 
 **Format**:
 ```markdown

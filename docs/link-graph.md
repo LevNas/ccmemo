@@ -40,6 +40,7 @@ python3 scripts/kb_graph.py lineage <entry>          # supersede chain → curre
 python3 scripts/kb_graph.py link-add <src> <dst> --reason "why"  # deterministic writer
 python3 scripts/kb_graph.py supersede <old> <new> --reason "what changed"  # change flow
 python3 scripts/kb_graph.py lint                     # exit 1 on findings
+python3 scripts/kb_graph.py union-recover <file>     # lossless union of diverged append-only copies
 ```
 
 ### `stats`
@@ -163,6 +164,65 @@ lint=$(ls -d "$HOME"/.claude/plugins/cache/*/ccmemo/*/scripts/kb_graph.py 2>/dev
 exec python3 "$lint" lint $changed
 ```
 
+### `union-recover <file> [--theirs <ref>]`
+
+Recovery helper for git-tracked mode with several checkouts (issue #24): the
+same capture file (`context-*.md`) or the `see:` block of a hub entry gets
+appended to in two checkouts and the copies diverge. For append-only
+divergence a union is exact, and this subcommand automates it with the
+verification built in. It works on a file path, not an entry query, needs no
+entry graph (a repository with captures but no knowledge base is fine), and
+ignores `--root` / `--json`.
+
+Two situations:
+
+```bash
+# 1. a merge/rebase stopped on the file — uses index stages 1/2/3
+python3 scripts/kb_graph.py union-recover <file>
+git add <file> && git rebase --continue        # or: git merge --continue
+
+# 2. `git pull` refuses: uncommitted local changes vs the fetched ref
+#    (common ancestor = merge-base of HEAD and the ref)
+git fetch
+python3 scripts/kb_graph.py union-recover <file> --theirs origin/main
+```
+
+Safety properties:
+
+- **Append-only or nothing.** Both sides must contain every line of the common
+  ancestor, in order — zero deleted or rewritten lines. Otherwise nothing is
+  written, the exit code is non-zero, and the message names the side and the
+  first ancestor line that was lost. A missing common ancestor (the file was
+  added on both sides) is refused the same way.
+- **No line lost.** After the union, the ancestor and both sides are each
+  verified to be fully contained in the result, in their original order.
+- **`--dry-run`** runs every check and reports without writing (still
+  non-zero on a refusal).
+- **Backup first.** The previous working-tree file is copied to
+  `<git-dir>/ccmemo-union-recover/<timestamp>-<filename>` before the atomic
+  write — inside the git dir, so it can never be committed.
+- The index is never touched: staging and continuing the merge/rebase stay
+  with you.
+
+Line order: additions of the upstream side come first (stage 2 during a
+rebase, the `--theirs` ref otherwise), local additions after — the same result
+as the manual `git merge-file --union` procedure. When one side's addition at
+a position wholly contains the other's, it is kept once, so running the
+command on an already-unioned file changes nothing. That matters for
+situation 2: after committing the union, `git pull --rebase` still stops on
+the file (git does not recognize that one side already contains the other) —
+run `union-recover <file>` again, `git add`, continue. If the local appends
+are not precious as *uncommitted* changes, committing them first and going
+straight through situation 1 is the shorter path.
+
+**Knowledge entries.** Only `see:`-style appends are union-safe. Frontmatter
+rewrites (`updated:`, `status:`) and body corrections are edit-vs-edit: the
+append-only verification rejects them by construction — pick a side by hand
+there. Partially overlapping additions are kept from both sides, so a link
+added in both checkouts with different reasons survives twice; that is left
+to `lint`, which reports it as `duplicate-link`. Run `lint` after recovering
+an entry.
+
 ## Addressing entries
 
 Every subcommand that takes an entry accepts its path relative to the entries
@@ -178,7 +238,8 @@ by `lint` but are not part of the entry graph.
 
 ## Flags
 
-- `--json` — machine-readable output for every subcommand
+- `--json` — machine-readable output for every graph subcommand
+  (`union-recover` prints plain text only)
 - `--root <dir>` — entries root (default `.claude/knowledge/entries`)
 - `--depth <n>` — BFS depth for `neighborhood` (default 1)
 - `--registry <file>` — tag registry for `lint` (default `<root>/../CLAUDE.md`)
