@@ -73,7 +73,9 @@ Deterministic writer counterpart of the graph reader: the model decides which
 entries to connect and writes the reason; the mechanical edit is deterministic.
 Appends after the entry's last link line (or a `## 関連` heading), is
 idempotent per target, writes atomically, and exits non-zero on any ambiguity
-so the caller can fall back to a manual edit. `--kind see|ref|amends|extends`
+so the caller can fall back to a manual edit — which must keep the same line
+shape, `- see: [<target's exact frontmatter title>](YYYY/MM/<filename>.md) —
+<relationship>`: entries/-relative, never `../`. `--kind see|ref|amends|extends`
 (default `see`); `--bidirectional` validates both directions before writing
 either file; `--dry-run` prints the planned insertion. A target whose
 frontmatter title contains a square bracket is refused — the label would not
@@ -249,7 +251,10 @@ by `lint` but are not part of the entry graph.
 - **`/record-knowledge`** — backlinks (step 7) and typed links are written with
   `link-add` instead of hand-editing entry files; the Change Flow's
   frontmatter pair, banner and successor-side `amends:` back-link are applied
-  with `supersede`.
+  with `supersede`. Both procedures restate the hand-written line format for
+  the fallback (non-zero exit, or an agent without a shell tool), and step 8
+  runs `lint` on the result — an agent that cannot run it says "lint not run"
+  in its summary so the caller does.
 - **`/recall-knowledge`** — multi-hop recalls (tracing how a decision evolved,
   connecting two topics, mapping an area) query `neighborhood` / `path` first
   and read only the endpoint entries, instead of chaining
