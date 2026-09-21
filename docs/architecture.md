@@ -11,7 +11,7 @@ Three scripts under `scripts/` back the search and review skills:
 |--------|---------|------|-------|
 | `kb_index.py` | `uv` (fastembed, sqlite-vec) | Build/refresh the per-machine vector index (sha256 incremental, idempotent) | v1.11.0 |
 | `kb_search.py` | `uv` (fastembed, sqlite-vec) | Hybrid query: lexical + vector arms, RRF fusion, `see:` 1-hop expansion, frontmatter filters | v1.11.0 |
-| `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / `lineage` / `link-add` / deterministic `lint` | v1.15.0 |
+| `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / `lineage` / `link-add` / deterministic `lint`; `union-recover` for append-only files diverged across checkouts (v1.23.0) | v1.15.0 |
 
 How the skills reach them:
 
@@ -103,6 +103,34 @@ harness-generated agent isolation worktree (`.claude/worktrees/agent-<hex>` or
 worktree. Detection matches only the harness naming convention, so user-named
 worktrees keep capturing. Set `CCMEMO_CAPTURE_AGENT_WORKTREES=1` to opt out of
 the suppression.
+
+### Multiple checkouts in git-tracked mode (issue #24)
+
+In git-tracked mode every checkout of a repository — linked worktrees, clones
+on other machines — appends to a same-named `context-*.md`, and the copies
+diverge: `git pull` then refuses to overwrite local changes, or a merge/rebase
+reports an append-vs-append conflict. Nothing is lost (both sides are partial
+logs of real activity), and two mitigations exist:
+
+- **Prevention, opt-in — `CCMEMO_CAPTURE_CHECKOUT_SUFFIX=1`.** Stage 1 names
+  new capture files `context-<YYYYMMDD-HHMMSS>-session-<id8>.md` and reuses
+  only today's unconsumed file ending in its own `<id8>`; files of other
+  checkouts are never appended to, so copies no longer share a name. `<id8>`
+  is the first 8 hex digits of `sha256(hostname + NUL + realpath(git
+  toplevel))` (realpath of the working directory outside git), computed in
+  `hooks/lib/checkout_id.py`. It is a one-way digest on purpose: capture files
+  are committed, possibly to public repositories, so the hostname and the path
+  never appear in a filename, body or log line. Cost: one capture file per
+  checkout per day instead of one per day, and one `git rev-parse` per captured
+  Write/Edit. Without the variable, naming and reuse are exactly as before.
+  Every reader addresses captures as `context-*.md`, so suffixed names need no
+  other configuration; enable it in every checkout that should stop sharing
+  files (a checkout without it keeps the legacy rule and appends to any of
+  today's files, suffixed or not).
+- **Recovery — `kb_graph.py union-recover <file>`.** Automates the lossless
+  union of two append-only copies, for captures and for hub-entry `see:`
+  blocks alike, and refuses anything that is not append-only. See
+  [link-graph.md](link-graph.md#union-recover-file---theirs-ref).
 
 ### Task mirroring for worktrees (issue-centric mode)
 

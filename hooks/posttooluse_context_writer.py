@@ -17,6 +17,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.agent_worktree import capture_suppressed  # noqa: E402
+from lib.checkout_id import checkout_id, suffix_enabled  # noqa: E402
 
 
 def find_active_task_dir(cwd: str) -> str | None:
@@ -56,17 +57,28 @@ def find_active_task_dir(cwd: str) -> str | None:
     return None
 
 
-def get_or_create_context_file(task_dir: str) -> str:
-    """Get today's context file or create a new one."""
+def get_or_create_context_file(task_dir: str, cwd: str | None = None) -> str:
+    """Get today's context file or create a new one.
+
+    With CCMEMO_CAPTURE_CHECKOUT_SUFFIX=1 (issue #24) the filename ends in
+    this checkout's opaque identifier and only files carrying that same
+    identifier are reused, so checkouts never append to each other's
+    captures. Without it, naming and reuse are unchanged.
+    """
     now = datetime.now()
     date_prefix = now.strftime("%Y%m%d")
+    name_tail = "-session.md"
+    reuse_tail = ".md"
+    if suffix_enabled():
+        name_tail = f"-session-{checkout_id(cwd or task_dir)}.md"
+        reuse_tail = name_tail
 
     # Look for an existing active context file from today
     try:
         for fname in os.listdir(task_dir):
             if (
                 fname.startswith(f"context-{date_prefix}")
-                and fname.endswith(".md")
+                and fname.endswith(reuse_tail)
             ):
                 # Check if it's still active
                 fpath = os.path.join(task_dir, fname)
@@ -82,7 +94,7 @@ def get_or_create_context_file(task_dir: str) -> str:
 
     # Create a new context file
     timestamp = now.strftime("%Y%m%d-%H%M%S")
-    context_path = os.path.join(task_dir, f"context-{timestamp}-session.md")
+    context_path = os.path.join(task_dir, f"context-{timestamp}{name_tail}")
     header = (
         "---\n"
         f"created: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -155,7 +167,7 @@ def main() -> None:
         return
 
     # Get or create context file
-    context_path = get_or_create_context_file(task_dir)
+    context_path = get_or_create_context_file(task_dir, cwd)
 
     # Append the entry
     try:
