@@ -132,7 +132,14 @@ Interactively fix issues found in the health check:
    - **Missing overviews**: Generate an overview entry template for the user to review — do NOT auto-create, ask for confirmation first
    - **Unregistered tags**: Auto-add missing tags to the registry in `.claude/knowledge/CLAUDE.md` under the appropriate section
    - **Unused tags**: Report for manual review (do not auto-delete)
-3. Report actions taken
+
+   **Writing links** (orphans, missing connections, unidirectional links, broken see links): when a shell tool is available, add each link with `kb_graph.py link-add <src> <dst> --reason "<relationship>"` (`--bidirectional` for a pair) — see record-knowledge step 7. If it exits non-zero or the CLI cannot be run at all (no shell tool), write the line by hand after the entry's last link line, or under its `## 関連` heading:
+
+   `- see: [<target's exact frontmatter title>](YYYY/MM/<filename>.md) — <relationship>`
+
+   The path is entries/-relative: never `../`, and the same shape in both directions. A corrected broken see link takes the same form. (`../` appears only in an in-repo `ref:` whose target lies outside `entries/`.)
+3. Verify: run `kb_graph.py lint` and confirm that no finding names an entry edited in step 2; fix any that does. If the lint cannot be run (no shell tool), the report must say **"lint not run"** so the caller knows to run it
+4. Report actions taken, including the lint result from step 3
 
 ## Output Format
 

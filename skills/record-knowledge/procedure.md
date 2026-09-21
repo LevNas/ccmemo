@@ -89,6 +89,7 @@ If a near-duplicate is found, reuse the existing tag. Do not create a new one.
 ### ref / see Link Format
 - External: `- ref: [title](https://example.com/...)`
 - In-repo: `- ref: [path](../../../relative-path)` (relative from `.claude/knowledge/entries/`)
+- `../` is only for an in-repo `ref:` whose target lies outside `entries/`. Links between entries (`see:` / `amends:` / `extends:`, backlinks included) never use `../` — they are written entries/-relative as `YYYY/MM/<filename>.md`, whatever directory the linking entry is in
 
 ### see Links (Synapse Formation Between Entries)
 - Add `see:` links to related entries when creating or editing an entry
@@ -144,10 +145,11 @@ Use when the Amendment Rules below say **supersede**: the change is not just a c
      --reason "<what the replacement changes>"
    ```
 
-   It sets the `status: superseded` + `superseded_by:` frontmatter pair on the old entry, inserts the body-top warning banner (next section), and appends an `- amends:` back-link to the replacement (skipped when the replacement already links the old entry). Everything is validated before anything is written, and re-running is safe — an interrupted run is completed. On a non-zero exit (ambiguous name, bracketed title, no link anchor, conflicting successor), fall back to the manual steps:
+   It sets the `status: superseded` + `superseded_by:` frontmatter pair on the old entry, inserts the body-top warning banner (next section), and appends an `- amends:` back-link to the replacement (skipped when the replacement already links the old entry). Everything is validated before anything is written, and re-running is safe — an interrupted run is completed. On a non-zero exit (ambiguous name, bracketed title, no link anchor, conflicting successor), or when the CLI cannot be run at all (no shell tool), fall back to the manual steps:
    - Old entry: set `status: superseded`, add `superseded_by: YYYY/MM/newer-entry-slug.md` (entries/-relative path)
    - Old entry: insert the warning banner directly under the frontmatter
-   - Replacement: add `- amends: [original title](YYYY/MM/original.md) — what changed`
+   - Replacement: add `- amends: [<original's exact frontmatter title>](YYYY/MM/original.md) — what changed`
+   - Both paths are entries/-relative — never `../`. Afterwards verify with `kb_graph.py lint` as in Procedure step 8; without a shell tool, say "lint not run" in the summary
 3. Keep the original entry body intact otherwise — supersede is a status change plus banner, not an edit
 
 `kb_graph.py lint` enforces the frontmatter pair deterministically (`superseded-status-mismatch`, `superseded-broken`, `superseded-missing-successor`, `supersede-cycle`); `kb_graph.py lineage` resolves chains to the current authority.
@@ -211,5 +213,17 @@ Entries are **mutable** — in-place editing is the default, and git tracks hist
    - Entries are addressed by unique filename substring; run from the project root so `--root` resolves
    - Add `--kind amends` / `--kind extends` when the relationship is typed (default: `see`)
    - The command is idempotent (an existing link to the same target is skipped) and appends after the entry's last link line (`see:`/`ref:`/`amends:`/`extends:`) or its `## 関連` heading
-   - **Fallback**: if it exits non-zero (no see-block anchor, ambiguous name, missing frontmatter title), edit that one entry manually as before
-8. Return a summary of what was recorded: filename, `#` heading, `##` headings, and linked entries
+   - **Fallback**: if it exits non-zero (no see-block anchor, ambiguous name, missing frontmatter title) **or the CLI cannot be run at all (no shell tool)**, edit that one entry by hand — append this line after its last link line, or under its `## 関連` heading:
+
+     `- see: [<target's exact frontmatter title>](YYYY/MM/<filename>.md) — <relationship>`
+
+     The path is entries/-relative: never `../`, and the same shape for a backlink as for a new link (use `amends:` / `extends:` in place of `see:` when the relationship is typed). Do not improvise another form — check the entry's existing link lines if in doubt
+8. **Verify links (deterministic)**: run the lint and confirm that no finding names the new entry or an entry edited in step 7:
+
+   ```bash
+   python3 "<plugin_root>/scripts/kb_graph.py" --root .claude/knowledge/entries lint
+   ```
+
+   - Fix any such finding (`broken-link`, `malformed-link`, `duplicate-link`, …) before returning; findings on other entries are pre-existing — report them, do not fix them here
+   - If the lint cannot be run (no shell tool), the summary in step 9 must say **"lint not run"** so the caller knows to run it
+9. Return a summary of what was recorded: filename, `#` heading, `##` headings, and linked entries — plus the lint result from step 8 (clean / findings fixed / "lint not run")

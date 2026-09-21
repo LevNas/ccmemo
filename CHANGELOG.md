@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.23.1] - 2026-09-22
+
+### Fixed
+- `/record-knowledge` procedure: the `link-add` fallback (step 7) only covered
+  a non-zero exit and said "edit manually as before" without restating the
+  format. An agent with no shell tool could not run the CLI at all, improvised
+  hand-written links, and the form drifted to `../../MM/<file>.md` within one
+  run — caught by `lint` as `broken-link`, but only after the fact (#39). The
+  fallback now also covers "the CLI cannot be run", and restates the line
+  inline: `- see: [<target's exact frontmatter title>](YYYY/MM/<filename>.md)
+  — <relationship>`, entries/-relative, never `../`, same shape for backlinks.
+- "ref / see Link Format" now separates the two cases: `../` is only for an
+  in-repo `ref:` whose target lies outside `entries/`; links between entries
+  never use it.
+- New step 8 (the summary moves to step 9): run `kb_graph.py lint` and confirm
+  no finding names the new or edited entries; an agent that cannot run it must
+  say "lint not run" in its summary so the caller does.
+- The same wording is mirrored where other procedures write list links by
+  hand: the Change Flow (`supersede`) fallback in the record-knowledge
+  procedure, and `/review-knowledge` Fix Mode (link fixes now point at
+  `link-add`, restate the hand-written format, and gain a lint verification
+  step). `docs/link-graph.md` describes the fallback contract.
+
+Documentation-only; no code change. The version is bumped because skill
+procedures ship through the version-keyed plugin cache.
+
 ## [1.23.0] - 2026-09-21
 
 Two mitigations for the known multi-checkout divergence in git-tracked mode
