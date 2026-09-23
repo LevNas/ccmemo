@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.25.0] - 2026-09-23
+
+### Added
+- `kb_search.py --summary`: neighbourhood summary mode. Per hit — title,
+  frontmatter `description` (falling back to the lead paragraph, marked
+  `(lead)`) and the typed links with the label each link carries, in the OKF
+  `index.md` shape (`* [Title](path) - description`, edges nested as
+  `- see <id> — label`). Meant to pick the one entry worth opening without
+  reading any body: ten summaries measure ~6.9 KB on a 288-entry Japanese KB,
+  under one entry body. `--edges N` / `--linked-from N` cap the outgoing /
+  incoming edges shown (defaults 3 / 0, `-1` = all). `--json` carries the
+  uncapped fields (`description_source`, `edges`, `linked_from`, totals).
+- Index schema v2: `entries.description` column and an `edges` table
+  (`src`, `target`, `rel`, `label`, `ord`) holding every `see` / `ref` /
+  `amends` / `extends` link with the one-line label written after it. An
+  older index is upgraded in place on the next search or reindex — metadata
+  and edges are re-read from the Markdown, nothing is re-embedded.
+- `hooks/lib/edges.py`: typed-edge extraction shared by the index and the
+  graph CLI (`LINK_RE` / `LOOSE_LINK_RE` now live here). Two extractors run
+  on every file: the `- see:`-style body bullets (knowledge-base convention)
+  and a frontmatter `related_docs:` list (design-document convention), so a
+  corpus can mix conventions without configuration.
+- `kb_graph.py index-md [--out FILE]`: the whole KB as an OKF-style
+  `index.md` (title + description per entry), a by-product other tools can
+  read; reports how many entries still lack a description.
+- `scripts/kb_recall_eval.py`: replays a log of search misses
+  (query → expected entry pairs, Markdown table or JSON Lines) and reports
+  hit@N; `--compare` diffs against an earlier `--json` run so retrieval
+  changes are measured rather than assumed.
+- `tests/test_edges.py`, `tests/test_kb_search_summary.py` (the sqlite part
+  runs when `sqlite_vec` is importable, e.g. `uv run --with sqlite-vec
+  --no-project python3 tests/test_kb_search_summary.py`).
+
+### Changed
+- One-hop expansion now follows every typed link (`ref` / `amends` /
+  `extends` too), previously only `- see:` lines.
+- Default search output prints a `when:` line from the frontmatter
+  `description` when present; the keyword snippet no longer starts with the
+  H1 (it repeated the title).
+
 ## [1.24.0] - 2026-09-23
 
 ### Added

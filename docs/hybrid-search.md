@@ -77,12 +77,72 @@ uv run scripts/kb_search.py ~/proj/.claude/knowledge/entries/ "トークン注�
 ```
 
 Filters: `--status`, `--tag` (repeatable), `--type`, `--created-from`,
-`--created-to`. Other flags: `--top N`, `--json`, `--no-lazy`, `--no-mecab`.
+`--created-to`. Other flags: `--top N`, `--summary`, `--edges N`,
+`--linked-from N`, `--json`, `--no-lazy`, `--no-mecab`.
 
 Pipeline: lexical rank (rg + mecab) and vector rank (sqlite-vec KNN) are each
 ranked, fused with **RRF (k=60)**, the top hits are **expanded one hop along
-`see:` links**, then frontmatter filters apply. Output is ranked `path` + score +
-snippet.
+typed links** (`see:` / `ref:` / `amends:` / `extends:`), then frontmatter
+filters apply. Output is ranked `path` + score + snippet, plus a `when:` line
+when the entry has a frontmatter `description`.
+
+### Neighbourhood summary (`--summary`)
+
+The default output still makes the model open candidates to decide between
+them (a body averages ~7 KB). `--summary` prints what is needed to pick **one**
+entry without opening any — per hit, the title, the `description` (the entry's
+trigger condition: when to open it) and its typed edges with the label each
+link carries — in the OKF `index.md` shape:
+
+```
+* [Title](2026/09/20260923-143000-user-slug.md) - Open when ... (the description)
+  - see 20260727-025736 — why the author linked it (the label)
+  - amends 20260815-213327 — what this entry corrects
+  - see 20260922-090000 — the upstream context (+5)
+```
+
+- Neighbours are identified by the `YYYYMMDD-HHMMSS` filename prefix (unique
+  in a ccmemo KB; `kb_graph.py` resolves it as a filename substring, and a
+  file glob `*/<id>-*.md` finds the path) plus the link's label — the reason
+  to follow it — rather than by their long title. `(+N)` counts edges not
+  shown. Entries without a `description` fall back to their lead paragraph,
+  marked `(lead)`. A non-active status is flagged, e.g. `(superseded)`.
+- Byte budget: on a 288-entry Japanese KB ten summaries with the defaults
+  (`--edges 3 --linked-from 0`) measure ~6.9 KB — under one entry body.
+  `--linked-from 1` adds the newest incoming link per hit (~90 bytes each);
+  useful to find the hub around a leaf. `-1` means all.
+- Hub → leaf reading: search for the topic, take the hub's summary, and Read
+  the single leaf whose label matches the question. `--edges -1` on a hub
+  lists every leaf.
+- `--json` carries the same fields uncapped by the text caps: `description`,
+  `description_source` (`frontmatter` | `lead`), `edges` / `linked_from`
+  (each with `target`/`source`, `rel`, `label`, `title`) and the totals.
+
+The edges come from the index (`edges` table: `src`, `target`, `rel`,
+`label`, `ord`), extracted by `hooks/lib/edges.py` from the `- see:`-style
+bullets in the body or from a frontmatter `related_docs:` list (design-document
+corpora). An index built before this table existed is upgraded in place on
+the next search — metadata and edges are re-read from the Markdown, nothing
+is re-embedded.
+
+### Replaying search misses (`kb_recall_eval.py`)
+
+Retrieval misses have several independent causes; which one dominates on a
+given corpus has to be measured, not guessed. Keep a log of misses as
+(query, expected entry) pairs — a Markdown table, e.g.
+`.claude/knowledge/search-misses.md`, **outside** the entries directory so it
+is never indexed — and replay it before and after any retrieval change:
+
+```bash
+uv run scripts/kb_recall_eval.py ROOT .claude/knowledge/search-misses.md            # hit@10
+uv run scripts/kb_recall_eval.py ROOT .claude/knowledge/search-misses.md --json > before.json
+uv run scripts/kb_recall_eval.py ROOT .claude/knowledge/search-misses.md --compare before.json
+```
+
+Table columns: `| date | query | expected | actual top | cause |` — only the
+second and third are read; `expected` is a unique filename substring (or
+relpath), several alternatives separated by `;`. JSON Lines
+(`{"query": ..., "expected": [...]}`) works too.
 
 **Lazy refresh**: before searching, on-disk hashes are compared with the index;
 changed/new entries are re-embedded just-in-time (disable with `--no-lazy`).

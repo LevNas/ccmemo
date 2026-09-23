@@ -40,6 +40,7 @@ python3 scripts/kb_graph.py lineage <entry>          # supersede chain → curre
 python3 scripts/kb_graph.py link-add <src> <dst> --reason "why"  # deterministic writer
 python3 scripts/kb_graph.py supersede <old> <new> --reason "what changed"  # change flow
 python3 scripts/kb_graph.py lint                     # exit 1 on findings
+python3 scripts/kb_graph.py index-md --out index.md  # OKF-style table of contents
 python3 scripts/kb_graph.py union-recover <file>     # lossless union of diverged append-only copies
 ```
 
@@ -96,6 +97,18 @@ conflicting existing successor, a supersede cycle, a bracketed replacement
 title, and a replacement with no link anchor (`--dry-run` previews). The
 banner is a blockquote on purpose — a list-form line would double-book the
 lineage as a graph edge.
+
+### `index-md [--out FILE]`
+
+Writes the whole KB as an OKF-style `index.md`: one bullet per entry,
+`* [Title](relpath) - description`, ordered by relpath (i.e. by date), with a
+non-active status flagged (`(superseded)`). The description is the entry's
+frontmatter trigger condition, so the file doubles as a progressive-disclosure
+table of contents that tools other than ccmemo can read; entries without a
+description are listed with the title only, and the count of those is
+printed, so the gap stays visible. Stdout when `--out` is omitted. The same
+shape is what `kb_search.py --summary` prints per hit (see
+[hybrid-search.md](hybrid-search.md)).
 
 ### `lint [files...]`
 

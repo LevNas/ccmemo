@@ -82,14 +82,14 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks"))
 from lib import frontmatter as _frontmatter  # noqa: E402
+from lib.edges import LINK_RE, LOOSE_LINK_RE  # noqa: E402,F401  (shared with kb_index)
 import tempfile
 from collections import deque
 
-LINK_RE = re.compile(r"^\s*-\s+(see|ref|amends|extends):\s*\[([^\]]*)\]\(([^)]+)\)", re.MULTILINE)
-# Loose shape of a link line: anything matching this but not LINK_RE would be
-# silently dropped from the graph (e.g. a label containing a square bracket),
-# so lint reports it as malformed-link instead of staying quiet.
-LOOSE_LINK_RE = re.compile(r"^\s*-\s+(see|ref|amends|extends):\s*\[")
+# LINK_RE: strict link line (kind, text, target). LOOSE_LINK_RE: anything that
+# looks like a link line; matching it but not LINK_RE means the line produces
+# no edge (e.g. a square bracket inside the link text), so lint reports it as
+# malformed-link instead of staying quiet. Both live in hooks/lib/edges.py.
 # Both registry line forms in use: "- #tag — description (count)" and "`#tag`"
 TAG_REGISTRY_RES = (
     re.compile(r"^- (#[\w\-]+)", re.MULTILINE),
@@ -131,6 +131,7 @@ def load_graph(root):
                 "title": meta.get("title", ""),
                 "tags": set(meta.get("tags", [])),
                 "status": meta.get("status", ""),
+                "description": meta.get("description", ""),
             }
             if not meta.get("title"):
                 problems.append((nid, "missing-title", "no frontmatter title"))
@@ -405,6 +406,31 @@ def cmd_lineage(nodes, edges, start, as_json):
             print(f"  → {n}\n      {short(nodes[n]['title'])}")
     flag = "" if nodes[current]["status"] in ("active", "draft") else f"  [status: {nodes[current]['status']}]"
     print(f"\ncurrent authority: {current}{flag}")
+
+
+def cmd_index_md(nodes, out_path):
+    """Write the whole KB as an OKF-style `index.md`: one bullet per entry,
+    `* [Title](relpath) - description`, ordered by relpath (= by date).
+
+    A by-product other tools can read without ccmemo; the description is the
+    entry's trigger condition (when to open it), so the file doubles as a
+    progressive-disclosure table of contents. Entries without a description
+    are listed with the title only, so the gap is visible.
+    """
+    lines = ["# Knowledge index", ""]
+    for nid in sorted(nodes):
+        n = nodes[nid]
+        title = " ".join((n.get("title") or nid).split())
+        desc = " ".join((n.get("description") or "").split())
+        flag = "" if n.get("status") in ("", "active") else f" ({n['status']})"
+        lines.append(f"* [{title}]({nid}){flag}" + (f" - {desc}" if desc else ""))
+    text = "\n".join(lines) + "\n"
+    if out_path:
+        _write_atomic(out_path, text)
+        missing = sum(1 for n in nodes.values() if not n.get("description"))
+        print(f"wrote {out_path}: {len(nodes)} entries, {missing} without description")
+    else:
+        sys.stdout.write(text)
 
 
 def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json):
@@ -849,6 +875,10 @@ def main():
                     help="banner date, YYYY-MM-DD (default: today)")
     sp.add_argument("--dry-run", action="store_true",
                     help="print planned changes without writing")
+    im = sub.add_parser("index-md",
+                        help="write the KB as an OKF-style index.md (title + description per entry)")
+    im.add_argument("--out", default=None, metavar="FILE",
+                    help="output file (default: stdout)")
     li = sub.add_parser("lint")
     li.add_argument("files", nargs="*",
                     help="limit findings to these files (e.g. staged entries)")
@@ -899,6 +929,8 @@ def main():
         if args.date is None:
             args.date = datetime.date.today().isoformat()
         cmd_supersede(args.root, nodes, edges, args)
+    elif args.cmd == "index-md":
+        cmd_index_md(nodes, args.out)
     elif args.cmd == "lint":
         registry = args.registry or os.path.join(args.root, "..", "CLAUDE.md")
         cmd_lint(nodes, edges, problems, registry, args.files, args.json)

@@ -16,10 +16,17 @@ Combines two retrieval arms and fuses them with Reciprocal Rank Fusion (RRF):
   2. vector arm   — KNN over locally-computed paraphrase-multilingual-MiniLM embeddings
                     stored in the sqlite-vec index built by kb_index.py.
 
-After fusion, the top hits are expanded one hop along `see:` links (so a directly
-relevant entry pulls in its explicitly-linked neighbours), then frontmatter filters
-(status / tag / type / created range) are applied, and a ranked list of
-path + score + snippet is returned.
+After fusion, the top hits are expanded one hop along typed links (see / ref /
+amends / extends — so a directly relevant entry pulls in its explicitly-linked
+neighbours), then frontmatter filters (status / tag / type / created range) are
+applied, and a ranked list of path + score + snippet is returned.
+
+Neighbourhood summary mode (--summary) prints, per hit, the title, the
+frontmatter `description` (the entry's trigger condition — when to open it) and
+its typed edges with the one-line label each link carries, in the OKF
+`index.md` shape (`* [Title](path) - description`). The point is to pick the
+ONE entry worth opening from the summary alone: ten summaries cost less
+context than one entry body.
 
 Lazy refresh: before searching, on-disk sha256 hashes are compared with the index;
 any entry that changed (or is new) is re-embedded just-in-time so results never go
@@ -37,6 +44,9 @@ Usage
       --created-from 2026-05-01    created >= date (YYYY-MM-DD)
       --created-to   2026-06-30    created <= date
       --top N              number of results (default 8)
+      --summary            neighbourhood summary output (title / description / edges)
+      --edges N            outgoing edges shown per hit (default 3, -1 = all)
+      --linked-from N      incoming edges shown per hit (default 0, -1 = all)
       --no-lazy            skip search-time re-embedding of changed entries
       --no-mecab           do not run mecab tokenisation for the lexical arm
       --json               emit JSON instead of human-readable output
@@ -48,6 +58,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -59,6 +71,16 @@ import kb_index as kbi  # noqa: E402
 
 RRF_K = 60
 SNIPPET_CHARS = 160
+# Summary mode byte budget: ten summaries must cost less context than opening
+# one entry body (~7 KB on a real corpus; Japanese text is 3 bytes per char).
+# Measured on a 288-entry KB with these caps: 10 hits ≈ 6.9 KB (incoming
+# edges off; each incoming edge line adds ~90 bytes per hit).
+SUMMARY_TITLE_CHARS = 100       # hit title
+SUMMARY_DESC_CHARS = 80         # description / lead-paragraph fallback
+SUMMARY_LABEL_CHARS = 40        # edge label
+SUMMARY_EDGE_TITLE_CHARS = 24   # neighbour title, only when the edge has no label
+DEFAULT_EDGES = 3
+DEFAULT_LINKED_FROM = 0
 
 
 # --------------------------------------------------------------------------- #
@@ -215,8 +237,10 @@ def rrf_fuse(*ranked_lists: list[str], k: int = RRF_K) -> dict[str, float]:
 def expand_see_one_hop(root: Path, top: list[str], fused: dict[str, float]) -> None:
     """Pull in entries directly linked from `top` (mutates `fused`).
 
-    A neighbour reachable from a top hit gets a small boost (half the linking
-    entry's score) so it can surface even if neither arm ranked it directly.
+    Follows every typed edge (see / ref / amends / extends) stored in the
+    `edges` table. A neighbour reachable from a top hit gets a small boost
+    (half the linking entry's score) so it can surface even if neither arm
+    ranked it directly.
     """
     db_path = kbi.index_db_path(root)
     if not db_path.exists():
@@ -225,16 +249,9 @@ def expand_see_one_hop(root: Path, top: list[str], fused: dict[str, float]) -> N
     kbi.init_schema(conn)
     known = {row[0] for row in conn.execute("SELECT relpath FROM entries")}
     for relpath in top:
-        row = conn.execute(
-            "SELECT see FROM entries WHERE relpath = ?", (relpath,)
-        ).fetchone()
-        if not row or not row[0]:
-            continue
-        try:
-            neighbours = json.loads(row[0])
-        except json.JSONDecodeError:
-            continue
-        for nb in neighbours:
+        for (nb,) in conn.execute(
+            "SELECT target FROM edges WHERE src = ? ORDER BY ord", (relpath,)
+        ):
             if nb in known and nb not in fused:
                 fused[nb] = 0.5 * fused.get(relpath, 0.0)
     conn.close()
@@ -247,8 +264,8 @@ def _entry_meta(root: Path) -> dict[str, dict]:
         return meta
     conn = kbi.connect(db_path)
     kbi.init_schema(conn)
-    for relpath, title, tags, status, created, etype in conn.execute(
-        "SELECT relpath, title, tags, status, created, type FROM entries"
+    for relpath, title, tags, status, created, etype, description in conn.execute(
+        "SELECT relpath, title, tags, status, created, type, description FROM entries"
     ):
         meta[relpath] = {
             "title": title,
@@ -256,9 +273,54 @@ def _entry_meta(root: Path) -> dict[str, dict]:
             "status": status,
             "created": created,
             "type": etype,
+            "description": description or "",
         }
     conn.close()
     return meta
+
+
+def _cap(rows: list, n: int) -> list:
+    return rows if n < 0 else rows[:n]
+
+
+def entry_edges(root: Path, relpaths: list[str], meta: dict[str, dict], *,
+                max_out: int, max_in: int) -> dict[str, dict]:
+    """Typed edges around each relpath, both directions, from the index only.
+
+    Returns {relpath: {"edges": [...], "edges_total": n,
+                       "linked_from": [...], "linked_from_total": m}}.
+    Each edge carries the neighbour's title (from the index) so the caller can
+    render it without opening any file.
+    """
+    out: dict[str, dict] = {}
+    db_path = kbi.index_db_path(root)
+    if not db_path.exists():
+        return out
+    conn = kbi.connect(db_path)
+    kbi.init_schema(conn)
+    for rp in relpaths:
+        outgoing = [
+            {"target": t, "rel": r, "label": lb or "",
+             "title": meta.get(t, {}).get("title", "")}
+            for t, r, lb in conn.execute(
+                "SELECT target, rel, label FROM edges WHERE src = ? ORDER BY ord", (rp,)
+            )
+        ]
+        incoming = [
+            {"source": sr, "rel": r, "label": lb or "",
+             "title": meta.get(sr, {}).get("title", "")}
+            for sr, r, lb in conn.execute(
+                "SELECT src, rel, label FROM edges WHERE target = ? ORDER BY src DESC", (rp,)
+            )
+        ]
+        out[rp] = {
+            "edges": _cap(outgoing, max_out),
+            "edges_total": len(outgoing),
+            "linked_from": _cap(incoming, max_in),
+            "linked_from_total": len(incoming),
+        }
+    conn.close()
+    return out
 
 
 def apply_filters(meta: dict, *, status, tags, etype, created_from, created_to) -> bool:
@@ -278,12 +340,37 @@ def apply_filters(meta: dict, *, status, tags, etype, created_from, created_to) 
     return True
 
 
+_HEADING_RE = re.compile(r"^\s*#{1,6}\s")
+
+
+def make_lead(path: Path, max_chars: int = SUMMARY_DESC_CHARS * 2) -> str:
+    """First body paragraph that is not a heading — the fallback for an entry
+    without a frontmatter `description` (entries written before the field
+    existed). Truncated by the caller; kept generous here for JSON consumers."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    _, body = kbi._split_frontmatter(content)
+    for para in re.split(r"\n\s*\n", body):
+        lines = [ln for ln in para.splitlines() if ln.strip()]
+        if not lines or _HEADING_RE.match(lines[0]):
+            continue
+        text = " ".join(" ".join(lines).split())
+        if text.startswith(("- ", "* ", "|", "```", ">")):
+            continue  # lists / tables / fences / quotes are not a lead
+        return text[:max_chars]
+    return ""
+
+
 def make_snippet(path: Path, query: str) -> str:
     try:
         content = path.read_text(encoding="utf-8")
     except OSError:
         return ""
     _, body = kbi._split_frontmatter(content)  # shared parser via kb_index
+    # The H1 repeats the title; drop it so the snippet adds information.
+    body = re.sub(r"^\s*#\s[^\n]*\n", "", body, count=1)
     body = " ".join(body.split())
     lowered = body.lower()
     pos = -1
@@ -306,11 +393,17 @@ def make_snippet(path: Path, query: str) -> str:
 # --------------------------------------------------------------------------- #
 
 def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
-           status, tags, etype, created_from, created_to) -> list[dict]:
+           status, tags, etype, created_from, created_to,
+           max_edges: int = DEFAULT_EDGES,
+           max_linked_from: int = DEFAULT_LINKED_FROM) -> list[dict]:
     if lazy:
         stale = kbi.detect_stale(root)
         if stale:
             kbi.reindex(root, only=stale, verbose=False)
+        else:
+            # An index built before the edges table existed: backfill the
+            # derived columns from the Markdown (no re-embedding).
+            kbi.ensure_metadata(root)
 
     lex = lexical_rank(root, query, use_mecab)
     vec = vector_rank(root, query)
@@ -329,6 +422,10 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
             created_from=created_from, created_to=created_to,
         ):
             continue
+        description = m.get("description", "")
+        source = "frontmatter" if description else "lead"
+        if not description:
+            description = make_lead(root / relpath)
         results.append(
             {
                 "path": str(root / relpath),
@@ -337,12 +434,112 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
                 "score": round(score, 5),
                 "status": m.get("status", ""),
                 "tags": m.get("tags", []),
+                "description": description,
+                "description_source": source,
                 "snippet": make_snippet(root / relpath, query),
             }
         )
         if len(results) >= top:
             break
+
+    edge_info = entry_edges(
+        root, [r["relpath"] for r in results], meta,
+        max_out=max_edges, max_in=max_linked_from,
+    )
+    for r in results:
+        r.update(edge_info.get(r["relpath"], {
+            "edges": [], "edges_total": 0, "linked_from": [], "linked_from_total": 0,
+        }))
     return results
+
+
+# --------------------------------------------------------------------------- #
+# Output
+# --------------------------------------------------------------------------- #
+
+def _trunc(text: str, n: int) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+_ENTRY_ID_RE = re.compile(r"^(\d{8}-\d{6})-")
+
+
+def entry_id(relpath: str) -> str:
+    """Short handle for a neighbour: the `YYYYMMDD-HHMMSS` filename prefix.
+
+    Unique within a ccmemo KB by construction and what `kb_graph.py` resolves
+    (unique filename substring), at 15 bytes instead of a ~90-byte relpath.
+    Files without the prefix (other corpora) fall back to their basename.
+    """
+    name = os.path.basename(relpath)
+    m = _ENTRY_ID_RE.match(name)
+    return m.group(1) if m else name
+
+
+def _edge_line(e: dict, key: str, arrow: str) -> str:
+    ref = entry_id(e[key])
+    if e.get("label"):
+        tail = _trunc(e["label"], SUMMARY_LABEL_CHARS)
+    else:
+        tail = _trunc(e.get("title") or e[key], SUMMARY_EDGE_TITLE_CHARS)
+    return f"  - {arrow}{e['rel']} {ref} — {tail}"
+
+
+def format_summary(results: list[dict]) -> str:
+    """Neighbourhood summary in the OKF `index.md` shape.
+
+    One top-level bullet per hit — `* [Title](relpath) - description` — with
+    the typed edges nested under it as `- rel <id> — label` (`←` marks an
+    incoming link; `(+N)` on the last line counts edges not shown). The label
+    is what the linking author wrote after the link, i.e. the reason to
+    follow it, so neighbours are identified by that reason plus a short id
+    rather than by their (long) title. The description falls back to the
+    entry's lead paragraph, marked `(lead)`, when the entry has none (entries
+    written before the field existed). Non-active status is flagged inline so
+    a superseded hit is never picked by mistake.
+    """
+    if not results:
+        return "(no hits)"
+    lines: list[str] = []
+    for r in results:
+        desc = r.get("description") or r.get("snippet") or ""
+        if r.get("description_source", "frontmatter") != "frontmatter" and desc:
+            desc = "(lead) " + desc
+        flag = "" if r.get("status") in ("", "active") else f" ({r['status']})"
+        lines.append(f"* [{_trunc(r['title'], SUMMARY_TITLE_CHARS)}]({r['relpath']}){flag}"
+                     f" - {_trunc(desc, SUMMARY_DESC_CHARS)}")
+        shown = r.get("edges", [])
+        for e in shown:
+            lines.append(_edge_line(e, "target", ""))
+        more = r.get("edges_total", 0) - len(shown)
+        if more > 0 and shown:
+            lines[-1] += f" (+{more})"
+        elif more > 0:
+            lines.append(f"  - (+{more} outgoing)")
+        shown_in = r.get("linked_from", [])
+        for e in shown_in:
+            lines.append(_edge_line(e, "source", "← "))
+        more_in = r.get("linked_from_total", 0) - len(shown_in)
+        if more_in > 0 and shown_in:
+            lines[-1] += f" (+{more_in})"
+        elif more_in > 0:
+            lines.append(f"  - (← +{more_in} incoming)")
+    return "\n".join(lines)
+
+
+def format_ranked(results: list[dict]) -> str:
+    if not results:
+        return "(no hits)"
+    lines: list[str] = []
+    for i, r in enumerate(results, 1):
+        lines.append(f"{i}. [{r['score']}] {r['title']}")
+        lines.append(f"   {r['relpath']}  ({r['status']}) {' '.join(r['tags'][:6])}")
+        if r.get("description") and r.get("description_source", "frontmatter") == "frontmatter":
+            lines.append(f"   when: {_trunc(r['description'], SUMMARY_DESC_CHARS)}")
+        if r["snippet"]:
+            lines.append(f"   {r['snippet']}")
+    return "\n".join(lines)
 
 
 def main(argv: list[str]) -> int:
@@ -355,6 +552,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--created-from")
     ap.add_argument("--created-to")
     ap.add_argument("--top", type=int, default=8)
+    ap.add_argument("--summary", action="store_true",
+                    help="neighbourhood summary: title / description / typed edges per hit")
+    ap.add_argument("--edges", type=int, default=DEFAULT_EDGES,
+                    help=f"outgoing edges kept per hit (default {DEFAULT_EDGES}, -1 = all)")
+    ap.add_argument("--linked-from", type=int, default=DEFAULT_LINKED_FROM, dest="linked_from",
+                    help=f"incoming edges kept per hit (default {DEFAULT_LINKED_FROM}, -1 = all)")
     ap.add_argument("--no-lazy", action="store_true")
     ap.add_argument("--no-mecab", action="store_true")
     ap.add_argument("--json", action="store_true")
@@ -375,18 +578,16 @@ def main(argv: list[str]) -> int:
         etype=args.etype,
         created_from=args.created_from,
         created_to=args.created_to,
+        max_edges=args.edges,
+        max_linked_from=args.linked_from,
     )
 
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
+    elif args.summary:
+        print(format_summary(results))
     else:
-        if not results:
-            print("(no hits)")
-        for i, r in enumerate(results, 1):
-            print(f"{i}. [{r['score']}] {r['title']}")
-            print(f"   {r['relpath']}  ({r['status']}) {' '.join(r['tags'][:6])}")
-            if r["snippet"]:
-                print(f"   {r['snippet']}")
+        print(format_ranked(results))
     return 0
 
 
