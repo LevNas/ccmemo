@@ -18,6 +18,7 @@ from pathlib import Path
 
 SCRIPTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
 sys.path.insert(0, SCRIPTS)
+import kb_graph as kbg  # noqa: E402
 import kb_index as kbi  # noqa: E402
 import kb_search as ks  # noqa: E402
 
@@ -35,6 +36,9 @@ def check(name, cond, detail=""):
 A = "2026/09/20260901-100000-u-alpha.md"
 B = "2026/09/20260902-100000-u-beta.md"
 C = "2026/08/20260801-100000-u-gamma.md"
+# D and E were recorded in the same second: they share the date-time prefix.
+D = "2026/09/20260903-100000-u-delta.md"
+E = "2026/09/20260903-100000-u-epsilon.md"
 
 
 def make_kb(base):
@@ -59,6 +63,11 @@ def make_kb(base):
             f"- extends: [Alpha]({A}) — beta extends alpha\n"
         ),
         C: "---\ntitle: Gamma entry\n---\n\n# Gamma entry\n\n## Only headings\n",
+        D: (
+            "---\ntitle: Delta entry\ndescription: Open for the delta case.\n---\n\n"
+            f"# Delta entry\n\n- see: [Epsilon]({E}) — its twin\n"
+        ),
+        E: "---\ntitle: Epsilon entry\n---\n\n# Epsilon entry\n\nEpsilon lead.\n",
     }.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,9 +92,47 @@ def test_parse_entry():
         check("snippet drops H1", not ks.make_snippet(root / A, "zzz").startswith("#"))
 
 
+def test_handles():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = make_kb(tmp)
+        entries = kbi.scan_entries(root)
+        check("unique prefix is the handle", entries[A].handle == "20260901-100000", entries[A].handle)
+        check("shared prefix falls back to basename",
+              entries[D].handle == "20260903-100000-u-delta.md"
+              and entries[E].handle == "20260903-100000-u-epsilon.md",
+              (entries[D].handle, entries[E].handle))
+        # The printed handle must be what kb_graph.py resolves.
+        nodes, _edges, _problems = kbg.load_graph(str(root))
+        for rel in (A, D, E):
+            check(f"kb_graph resolves handle of {rel.rsplit('/', 1)[-1]}",
+                  kbg.resolve_entry(nodes, entries[rel].handle) == rel)
+        try:
+            kbg.resolve_entry(nodes, "20260903-100000")
+            check("raw shared prefix is ambiguous for kb_graph", False)
+        except SystemExit as exc:
+            check("raw shared prefix is ambiguous for kb_graph", "ambiguous" in str(exc), exc)
+    check("candidates: prefix, basename, relpath",
+          kbi.handle_candidates(A) == ["20260901-100000", "20260901-100000-u-alpha.md", A])
+    check("candidates without prefix", kbi.handle_candidates("design/spec.md") == ["spec.md", "design/spec.md"])
+    check("candidates at root", kbi.handle_candidates("spec.md") == ["spec.md"])
+    # Same basename in two directories (a non-dated corpus): relpath wins.
+    twins = {rp: kbi.Entry(path=Path(rp), relpath=rp, title="", tags=[], status="", created="",
+                           type="", see=[], body="", sha256="")
+             for rp in ("a/README.md", "b/README.md", "c/other.md")}
+    kbi.assign_handles(twins)
+    check("duplicate basename falls back to relpath",
+          [e.handle for e in twins.values()] == ["a/README.md", "b/README.md", "other.md"],
+          [e.handle for e in twins.values()])
+
+
 def test_entry_id_and_format():
     check("entry_id prefix", ks.entry_id(A) == "20260901-100000")
     check("entry_id fallback basename", ks.entry_id("design/spec.md") == "spec.md")
+    line = ks._edge_line({"target": D, "rel": "see", "label": "twin",
+                          "handle": "20260903-100000-u-delta.md"}, "target", "")
+    check("edge line prints the index handle", line == "  - see 20260903-100000-u-delta.md — twin", line)
+    line = ks._edge_line({"target": B, "rel": "see", "label": "x"}, "target", "")
+    check("edge line falls back to the prefix without a handle", line == "  - see 20260902-100000 — x", line)
     results = [{
         "title": "Alpha entry", "relpath": A, "status": "active",
         "description": "Open when choosing.", "description_source": "frontmatter",
@@ -130,7 +177,7 @@ def test_schema_upgrade():
         conn.execute("CREATE TABLE entries (relpath TEXT PRIMARY KEY, title TEXT, tags TEXT, "
                      "status TEXT, created TEXT, type TEXT, see TEXT, sha256 TEXT)")
         conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
-        for rel in (A, B, C):
+        for rel in (A, B, C, D, E):
             e = kbi.parse_entry(root / rel, root)
             conn.execute("INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                          (rel, "old title", "[]", "active", "", "", "[]", e.sha256))
@@ -138,7 +185,7 @@ def test_schema_upgrade():
         conn.close()
 
         n = kbi.ensure_metadata(root)
-        check("upgrade touched every stored entry", n == 3, n)
+        check("upgrade touched every stored entry", n == 5, n)
         conn = kbi.connect(db)
         desc = conn.execute("SELECT description FROM entries WHERE relpath = ?", (A,)).fetchone()[0]
         check("description backfilled", desc == "Open when choosing between alpha and beta.")
@@ -154,13 +201,30 @@ def test_schema_upgrade():
         conn.close()
         check("second call is a no-op", kbi.ensure_metadata(root) == 0)
 
+        # Handles backfilled by the upgrade (schema 3), no embedding involved.
+        conn = kbi.connect(db)
+        handles = dict(conn.execute("SELECT relpath, handle FROM entries"))
+        conn.close()
+        check("handles backfilled",
+              handles[A] == "20260901-100000" and handles[D] == "20260903-100000-u-delta.md"
+              and handles[E] == "20260903-100000-u-epsilon.md", handles)
+
         # Edge lookups used by the summary mode.
         meta = ks._entry_meta(root)
+        check("meta carries the handle", meta[E]["handle"] == "20260903-100000-u-epsilon.md")
+        twin = ks.entry_edges(root, [D], meta, max_out=-1, max_in=-1)[D]["edges"][0]
+        check("edge carries the neighbour's handle", twin["handle"] == "20260903-100000-u-epsilon.md", twin)
+        out = ks.format_summary([{"title": "Delta entry", "relpath": D, "status": "active",
+                                  "description": "Open for the delta case.", "edges": [twin],
+                                  "edges_total": 1}])
+        check("summary prints a distinguishable handle",
+              out.splitlines()[1] == "  - see 20260903-100000-u-epsilon.md — its twin", out)
         info = ks.entry_edges(root, [A, B], meta, max_out=1, max_in=-1)
         check("outgoing capped, total kept", len(info[A]["edges"]) == 1 and info[A]["edges_total"] == 3)
         check("neighbour title resolved", info[A]["edges"][0]["title"] == "Beta entry")
         check("incoming resolved", info[A]["linked_from"] == [
-            {"source": B, "rel": "extends", "label": "beta extends alpha", "title": "Beta entry"}])
+            {"source": B, "rel": "extends", "label": "beta extends alpha", "title": "Beta entry",
+             "handle": "20260902-100000"}])
         fused = {A: 1.0}
         ks.expand_see_one_hop(root, [A], fused)
         check("one-hop follows amends too", fused.get(C) == 0.5 and fused.get(B) == 0.5, fused)
@@ -169,6 +233,7 @@ def test_schema_upgrade():
 
 if __name__ == "__main__":
     test_parse_entry()
+    test_handles()
     test_entry_id_and_format()
     test_schema_upgrade()
     if FAILURES:

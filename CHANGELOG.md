@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.26.2] - 2026-09-24
+
+### Fixed
+- `kb_search.py --summary` named a neighbour by its `YYYYMMDD-HHMMSS`
+  filename prefix, which is not unique: entries recorded in the same second
+  share it, so the printed id matched several files and
+  `kb_graph.py neighborhood <id>` refused it as ambiguous (#45). The index
+  now stores a **handle** per entry — the shortest name that is unique in
+  the corpus (prefix, else filename, else relpath) — and the summary prints
+  that. `--json` carries `handle` on every hit and edge next to `relpath`.
+  The index upgrades itself on the next search (metadata only, no
+  re-embedding), as in 1.25.
+
 ## [1.26.1] - 2026-09-23
 
 ### Added

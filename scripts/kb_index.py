@@ -55,6 +55,7 @@ import sqlite3
 import struct
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -135,6 +136,7 @@ class Entry:
     body: str            # body text (frontmatter stripped)
     sha256: str
     description: str = ""                # frontmatter trigger condition
+    handle: str = ""                     # shortest corpus-unique short name (assign_handles)
     edges: list[dict] = field(default_factory=list)  # [{target, rel, label}]
     chunks: list[tuple[str, str]] = field(default_factory=list)  # (chunk_id, text)
 
@@ -147,7 +149,8 @@ from lib import edges as _edges  # noqa: E402
 
 # Bump when the *derived* columns/tables change shape. An older DB is upgraded
 # in place by re-reading metadata + edges from the Markdown — no re-embedding.
-SCHEMA_VERSION = 2
+# 3: entries.handle (shortest corpus-unique short name for the summary mode).
+SCHEMA_VERSION = 3
 
 
 def _split_frontmatter(content: str) -> tuple[dict, str]:
@@ -252,7 +255,44 @@ def scan_entries(root: Path) -> dict[str, Entry]:
         entry = parse_entry(path, root)
         if entry is not None:
             entries[entry.relpath] = entry
+    assign_handles(entries)
     return entries
+
+
+_HANDLE_PREFIX_RE = re.compile(r"^(\d{8}-\d{6})-")
+
+
+def handle_candidates(relpath: str) -> list[str]:
+    """Short names for one entry, shortest first: the `YYYYMMDD-HHMMSS`
+    filename prefix (when the file has one), the basename, the relpath."""
+    name = relpath.rsplit("/", 1)[-1]
+    cands: list[str] = []
+    m = _HANDLE_PREFIX_RE.match(name)
+    if m:
+        cands.append(m.group(1))
+    cands.append(name)
+    if relpath != name:
+        cands.append(relpath)
+    return cands
+
+
+def assign_handles(entries: dict[str, Entry]) -> None:
+    """Give every entry the shortest name that is unique in this corpus.
+
+    The date-time prefix is unique for most entries but not by construction:
+    entries recorded in the same second share it (a batch of proposals
+    written together). Those fall back to the basename, then the relpath,
+    so a summary line always names one file and `kb_graph.py` (which
+    resolves a unique filename substring) accepts the handle as printed.
+    A handle depends on the whole corpus, so it is assigned after the scan
+    and written by `_write_handles`, not by the per-entry upsert.
+    """
+    cands = {rp: handle_candidates(rp) for rp in entries}
+    counts: Counter[str] = Counter()
+    for cs in cands.values():
+        counts.update(cs)
+    for rp, entry in entries.items():
+        entry.handle = next((c for c in cands[rp] if counts[c] == 1), rp)
 
 
 # --------------------------------------------------------------------------- #
@@ -291,6 +331,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         """
     )
     _ensure_column(conn, "entries", "description", "TEXT DEFAULT ''")
+    _ensure_column(conn, "entries", "handle", "TEXT DEFAULT ''")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS edges (
@@ -418,7 +459,7 @@ def _write_metadata(conn: sqlite3.Connection, entry: Entry) -> None:
     """Refresh the derived (non-embedding) columns and edges of one entry."""
     conn.execute(
         "UPDATE entries SET title = ?, tags = ?, status = ?, created = ?, type = ?, "
-        "see = ?, description = ? WHERE relpath = ?",
+        "see = ?, description = ?, handle = ? WHERE relpath = ?",
         (
             entry.title,
             json.dumps(entry.tags, ensure_ascii=False),
@@ -427,10 +468,26 @@ def _write_metadata(conn: sqlite3.Connection, entry: Entry) -> None:
             entry.type,
             json.dumps(entry.see, ensure_ascii=False),
             entry.description,
+            entry.handle,
             entry.relpath,
         ),
     )
     _write_edges(conn, entry)
+
+
+def _write_handles(conn: sqlite3.Connection, entries: dict[str, Entry]) -> int:
+    """Refresh `entries.handle` for the whole corpus. Kept apart from the
+    per-entry upsert because a handle depends on every other entry: adding
+    one that shares a prefix changes the *other* entry's handle although
+    its content (sha256) is unchanged. Returns the number of rows changed."""
+    n = 0
+    for relpath, entry in entries.items():
+        cur = conn.execute(
+            "UPDATE entries SET handle = ? WHERE relpath = ? AND handle IS NOT ?",
+            (entry.handle, relpath, entry.handle),
+        )
+        n += cur.rowcount
+    return n
 
 
 def _upgrade_schema(conn: sqlite3.Connection, entries: dict[str, Entry]) -> int:
@@ -445,6 +502,7 @@ def _upgrade_schema(conn: sqlite3.Connection, entries: dict[str, Entry]) -> int:
             continue
         _write_metadata(conn, entry)
         n += 1
+    _write_handles(conn, entries)
     _meta_set(conn, "schema_version", str(SCHEMA_VERSION))
     conn.commit()
     return n
@@ -475,7 +533,7 @@ def _upsert_entry(conn: sqlite3.Connection, entry: Entry) -> int:
     _delete_entry_rows(conn, entry.relpath)
     conn.execute(
         "INSERT INTO entries (relpath, title, tags, status, created, type, see, sha256, "
-        "description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "description, handle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             entry.relpath,
             entry.title,
@@ -486,6 +544,7 @@ def _upsert_entry(conn: sqlite3.Connection, entry: Entry) -> int:
             json.dumps(entry.see, ensure_ascii=False),
             entry.sha256,
             entry.description,
+            entry.handle,
         ),
     )
     _write_edges(conn, entry)
@@ -517,6 +576,7 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
     init_schema(conn)
 
     entries = scan_entries(root)
+    corpus = entries  # the full scan: handles are corpus-wide
     upgraded = _upgrade_schema(conn, entries)
     stored = _stored_hashes(conn)
 
@@ -544,6 +604,9 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
         else:
             changed += 1
 
+    # A neighbour's handle can change without its content changing (a new
+    # entry took the same prefix), so handles are refreshed for the corpus.
+    _write_handles(conn, corpus)
     _meta_set(conn, "last_indexed", str(int(time.time())))
     _meta_set(conn, "schema_version", str(SCHEMA_VERSION))
     conn.commit()

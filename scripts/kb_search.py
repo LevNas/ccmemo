@@ -264,11 +264,13 @@ def _entry_meta(root: Path) -> dict[str, dict]:
         return meta
     conn = kbi.connect(db_path)
     kbi.init_schema(conn)
-    for relpath, title, tags, status, created, etype, description in conn.execute(
-        "SELECT relpath, title, tags, status, created, type, description FROM entries"
+    for relpath, title, tags, status, created, etype, description, handle in conn.execute(
+        "SELECT relpath, title, tags, status, created, type, description, handle "
+        "FROM entries"
     ):
         meta[relpath] = {
             "title": title,
+            "handle": handle or entry_id(relpath),
             "tags": json.loads(tags) if tags else [],
             "status": status,
             "created": created,
@@ -289,8 +291,8 @@ def entry_edges(root: Path, relpaths: list[str], meta: dict[str, dict], *,
 
     Returns {relpath: {"edges": [...], "edges_total": n,
                        "linked_from": [...], "linked_from_total": m}}.
-    Each edge carries the neighbour's title (from the index) so the caller can
-    render it without opening any file.
+    Each edge carries the neighbour's title and short handle (from the index)
+    so the caller can render it without opening any file.
     """
     out: dict[str, dict] = {}
     db_path = kbi.index_db_path(root)
@@ -301,14 +303,16 @@ def entry_edges(root: Path, relpaths: list[str], meta: dict[str, dict], *,
     for rp in relpaths:
         outgoing = [
             {"target": t, "rel": r, "label": lb or "",
-             "title": meta.get(t, {}).get("title", "")}
+             "title": meta.get(t, {}).get("title", ""),
+             "handle": meta.get(t, {}).get("handle") or entry_id(t)}
             for t, r, lb in conn.execute(
                 "SELECT target, rel, label FROM edges WHERE src = ? ORDER BY ord", (rp,)
             )
         ]
         incoming = [
             {"source": sr, "rel": r, "label": lb or "",
-             "title": meta.get(sr, {}).get("title", "")}
+             "title": meta.get(sr, {}).get("title", ""),
+             "handle": meta.get(sr, {}).get("handle") or entry_id(sr)}
             for sr, r, lb in conn.execute(
                 "SELECT src, rel, label FROM edges WHERE target = ? ORDER BY src DESC", (rp,)
             )
@@ -430,6 +434,7 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
             {
                 "path": str(root / relpath),
                 "relpath": relpath,
+                "handle": m.get("handle") or entry_id(relpath),
                 "title": m.get("title", relpath),
                 "score": round(score, 5),
                 "status": m.get("status", ""),
@@ -466,11 +471,13 @@ _ENTRY_ID_RE = re.compile(r"^(\d{8}-\d{6})-")
 
 
 def entry_id(relpath: str) -> str:
-    """Short handle for a neighbour: the `YYYYMMDD-HHMMSS` filename prefix.
+    """Fallback short name: the `YYYYMMDD-HHMMSS` filename prefix.
 
-    Unique within a ccmemo KB by construction and what `kb_graph.py` resolves
-    (unique filename substring), at 15 bytes instead of a ~90-byte relpath.
-    Files without the prefix (other corpora) fall back to their basename.
+    Used only when the index has no `handle` for the path (an entry not yet
+    indexed). The prefix is usually unique but not by construction —
+    entries written in the same second share it — so the index computes
+    the shortest corpus-unique handle (`kb_index.assign_handles`) and the
+    summary prints that. Files without the prefix fall back to the basename.
     """
     name = os.path.basename(relpath)
     m = _ENTRY_ID_RE.match(name)
@@ -478,7 +485,7 @@ def entry_id(relpath: str) -> str:
 
 
 def _edge_line(e: dict, key: str, arrow: str) -> str:
-    ref = entry_id(e[key])
+    ref = e.get("handle") or entry_id(e[key])
     if e.get("label"):
         tail = _trunc(e["label"], SUMMARY_LABEL_CHARS)
     else:
@@ -490,11 +497,12 @@ def format_summary(results: list[dict]) -> str:
     """Neighbourhood summary in the OKF `index.md` shape.
 
     One top-level bullet per hit — `* [Title](relpath) - description` — with
-    the typed edges nested under it as `- rel <id> — label` (`←` marks an
+    the typed edges nested under it as `- rel <handle> — label` (`←` marks an
     incoming link; `(+N)` on the last line counts edges not shown). The label
     is what the linking author wrote after the link, i.e. the reason to
-    follow it, so neighbours are identified by that reason plus a short id
-    rather than by their (long) title. The description falls back to the
+    follow it, so neighbours are identified by that reason plus a short
+    handle — the date-time prefix, or the filename when two entries share
+    one — rather than by their (long) title. The description falls back to the
     entry's lead paragraph, marked `(lead)`, when the entry has none (entries
     written before the field existed). Non-active status is flagged inline so
     a superseded hit is never picked by mistake.
