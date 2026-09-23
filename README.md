@@ -99,6 +99,7 @@ go structure-first through the `see:`-link graph — pure stdlib, no index:
 python3 scripts/kb_graph.py stats                    # hubs, orphans, components
 python3 scripts/kb_graph.py path <entry-a> <entry-b> # shortest link path
 python3 scripts/kb_graph.py lineage <entry>          # supersede chain → current authority
+python3 scripts/kb_graph.py index-md --out index.md  # OKF-style table of contents
 ```
 
 All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md).

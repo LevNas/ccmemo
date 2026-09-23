@@ -26,10 +26,21 @@ first and use search only to find the starting entry.
 Run from Bash (main agent):
 
 ```bash
-uv run "{plugin_root}/scripts/kb_search.py" "{KB_ROOT}" "<query>" --top 8 \
+uv run "{plugin_root}/scripts/kb_search.py" "{KB_ROOT}" "<query>" --summary --top 10 \
   [--status active] [--tag '#sometag'] [--type knowledge] \
   [--created-from YYYY-MM-DD] [--created-to YYYY-MM-DD] [--json]
 ```
+
+Start with `--summary`: per hit it prints the title, the `description` (when
+to open the entry) and the typed links with their labels, in ~700 bytes per
+hit — ten summaries cost less than opening one body. Pick the ONE entry whose
+description or link labels match the question and Read only that. Neighbours
+appear as `- see 20260727-025736 — <label>`: the id is the filename prefix
+(`kb_graph.py neighborhood 20260727-025736`, or glob `*/20260727-025736-*.md`
+to Read it). `(lead)` marks a fallback (no description yet); `(superseded)`
+means go to the current authority instead. Drop `--summary` for keyword
+snippets; add `--linked-from 1` to see which hub links to a leaf; `--edges -1`
+on a hub lists every leaf.
 
 Notes:
 - **No network at search time**: the query is embedded with the locally cached model.

@@ -24,6 +24,12 @@ cross-language wording (e.g. Japanese ↔ English identifiers) that literal keyw
 - NOT for per-prompt automatic injection — that stays ripgrep via the existing
   `userpromptsubmit_knowledge_search.sh` hook (instant, no model load)
 
+## Summary First, Then One Entry
+Run the search with `--summary`: each hit shows its title, its `description`
+(the trigger condition — when to open it) and its typed links with the labels
+their authors wrote. Choose the single entry to Read from that; do not open
+several candidates to compare them. Details in the procedure file.
+
 ## Structure First for Multi-Hop Questions
 When the recall looks like it needs several hops — tracing how a decision evolved,
 asking how two topics connect, or mapping everything around an entry — do NOT chain

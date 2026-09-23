@@ -16,8 +16,11 @@ entry for `.claude/knowledge/.index/`).
 What it does
 ------------
 - Scans every `*.md` under the knowledge root (recursively; dated subdirs OK).
-- Extracts frontmatter: title, tags, status, created, type.
-- Extracts `- see:` links from the body (relative paths to other entries).
+- Extracts frontmatter: title, tags, status, created, type, description.
+- Extracts typed links (`- see:` / `ref:` / `amends:` / `extends:` bullets, or a
+  frontmatter `related_docs:` list) with their kind and one-line label into an
+  `edges` table, so a search can show *why* a neighbour is linked without
+  opening either file (hooks/lib/edges.py owns the extraction).
 - Chunks the body: one chunk per entry, plus extra `##`-section chunks for large
   entries (so long entries stay retrievable section-by-section).
 - Embeds each chunk locally with fastembed `paraphrase-multilingual-MiniLM-L12-v2` (384-dim).
@@ -128,19 +131,23 @@ class Entry:
     status: str
     created: str
     type: str
-    see: list[str]       # relative paths referenced by `- see:` links
+    see: list[str]       # link targets (all kinds), kept for one-hop expansion
     body: str            # body text (frontmatter stripped)
     sha256: str
+    description: str = ""                # frontmatter trigger condition
+    edges: list[dict] = field(default_factory=list)  # [{target, rel, label}]
     chunks: list[tuple[str, str]] = field(default_factory=list)  # (chunk_id, text)
-
-
-_SEE_LINK_RE = re.compile(r"^-\s+see:\s*\[[^\]]*\]\(([^)]+)\)", re.MULTILINE)
 
 # One frontmatter parser for every reader (hooks/lib/frontmatter.py): reads
 # both tag forms (quoted string and YAML list) and defaults a missing status
 # to "active", so the index, the graph CLI and the prompt hook agree.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
 from lib import frontmatter as _frontmatter  # noqa: E402
+from lib import edges as _edges  # noqa: E402
+
+# Bump when the *derived* columns/tables change shape. An older DB is upgraded
+# in place by re-reading metadata + edges from the Markdown — no re-embedding.
+SCHEMA_VERSION = 2
 
 
 def _split_frontmatter(content: str) -> tuple[dict, str]:
@@ -158,7 +165,8 @@ def parse_entry(path: Path, root: Path) -> Entry | None:
     fm, body = _split_frontmatter(content)
     sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
     tags = fm["tags"]
-    see = [m.strip() for m in _SEE_LINK_RE.findall(body)]
+    edges = _resolve_edges(root, path.parent, _edges.extract_edges(fm, body))
+    see = [e["target"] for e in edges]
     try:
         relpath = str(path.relative_to(root))
     except ValueError:
@@ -175,9 +183,34 @@ def parse_entry(path: Path, root: Path) -> Entry | None:
         see=see,
         body=body,
         sha256=sha,
+        description=fm["description"],
+        edges=edges,
     )
     entry.chunks = _chunk_entry(entry)
     return entry
+
+
+def _resolve_edges(root: Path, entry_dir: Path, edges: list[dict]) -> list[dict]:
+    """Rewrite each edge target as an entries-root relpath when it resolves.
+
+    Links are written root-relative by convention (`2026/09/...md`); a target
+    that only resolves relative to the linking file's directory is normalised
+    to its root relpath too. Unresolvable targets are kept as written so a
+    broken link is still visible in the summary output (kb_graph lint reports it).
+    """
+    out: list[dict] = []
+    for e in edges:
+        target = e["target"]
+        for cand in (root / target, entry_dir / target):
+            try:
+                cand = cand.resolve()
+                if cand.is_file():
+                    target = str(cand.relative_to(root.resolve()))
+                    break
+            except (OSError, ValueError):
+                continue
+        out.append({"target": target, "rel": e["rel"], "label": e["label"]})
+    return out
 
 
 def _chunk_entry(entry: Entry) -> list[tuple[str, str]]:
@@ -257,6 +290,20 @@ def init_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _ensure_column(conn, "entries", "description", "TEXT DEFAULT ''")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS edges (
+            src    TEXT,    -- linking entry relpath
+            target TEXT,    -- linked entry relpath (as resolved; raw if broken)
+            rel    TEXT,    -- see | ref | amends | extends
+            label  TEXT,    -- one-line reason written after the link
+            ord    INTEGER  -- position within src, document order
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS edges_src ON edges (src)")
+    conn.execute("CREATE INDEX IF NOT EXISTS edges_target ON edges (target)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS chunks (
@@ -278,6 +325,25 @@ def init_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     conn.commit()
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def _meta_get(conn: sqlite3.Connection, key: str) -> str:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else ""
+
+
+def _meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
 
 
 def _stored_hashes(conn: sqlite3.Connection) -> dict[str, str]:
@@ -333,15 +399,83 @@ def _delete_entry_rows(conn: sqlite3.Connection, relpath: str) -> None:
     for rowid in rows:
         conn.execute("DELETE FROM vec_chunks WHERE chunk_rowid = ?", (rowid,))
     conn.execute("DELETE FROM chunks WHERE relpath = ?", (relpath,))
+    conn.execute("DELETE FROM edges WHERE src = ?", (relpath,))
     conn.execute("DELETE FROM entries WHERE relpath = ?", (relpath,))
+
+
+def _write_edges(conn: sqlite3.Connection, entry: Entry) -> None:
+    conn.execute("DELETE FROM edges WHERE src = ?", (entry.relpath,))
+    conn.executemany(
+        "INSERT INTO edges (src, target, rel, label, ord) VALUES (?, ?, ?, ?, ?)",
+        [
+            (entry.relpath, e["target"], e["rel"], e["label"], i)
+            for i, e in enumerate(entry.edges)
+        ],
+    )
+
+
+def _write_metadata(conn: sqlite3.Connection, entry: Entry) -> None:
+    """Refresh the derived (non-embedding) columns and edges of one entry."""
+    conn.execute(
+        "UPDATE entries SET title = ?, tags = ?, status = ?, created = ?, type = ?, "
+        "see = ?, description = ? WHERE relpath = ?",
+        (
+            entry.title,
+            json.dumps(entry.tags, ensure_ascii=False),
+            entry.status,
+            entry.created,
+            entry.type,
+            json.dumps(entry.see, ensure_ascii=False),
+            entry.description,
+            entry.relpath,
+        ),
+    )
+    _write_edges(conn, entry)
+
+
+def _upgrade_schema(conn: sqlite3.Connection, entries: dict[str, Entry]) -> int:
+    """Backfill metadata + edges for every indexed entry when the DB predates
+    SCHEMA_VERSION. Embeddings are untouched. Returns the number refreshed."""
+    if _meta_get(conn, "schema_version") == str(SCHEMA_VERSION):
+        return 0
+    n = 0
+    for relpath in _stored_hashes(conn):
+        entry = entries.get(relpath)
+        if entry is None:
+            continue
+        _write_metadata(conn, entry)
+        n += 1
+    _meta_set(conn, "schema_version", str(SCHEMA_VERSION))
+    conn.commit()
+    return n
+
+
+def ensure_metadata(root: Path) -> int:
+    """Upgrade an older index in place (metadata + edges only, no embedding).
+
+    kb_search calls this before searching so the summary mode has edges even
+    when no entry changed since the DB was built. Cheap: parses the Markdown
+    once, touches sqlite only when the schema version is behind.
+    """
+    db_path = index_db_path(root)
+    if not db_path.exists():
+        return 0
+    conn = connect(db_path)
+    init_schema(conn)
+    try:
+        if _meta_get(conn, "schema_version") == str(SCHEMA_VERSION):
+            return 0
+        return _upgrade_schema(conn, scan_entries(root))
+    finally:
+        conn.close()
 
 
 def _upsert_entry(conn: sqlite3.Connection, entry: Entry) -> int:
     """(Re)write one entry and its chunks. Returns number of chunks embedded."""
     _delete_entry_rows(conn, entry.relpath)
     conn.execute(
-        "INSERT INTO entries (relpath, title, tags, status, created, type, see, sha256) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO entries (relpath, title, tags, status, created, type, see, sha256, "
+        "description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             entry.relpath,
             entry.title,
@@ -351,8 +485,10 @@ def _upsert_entry(conn: sqlite3.Connection, entry: Entry) -> int:
             entry.type,
             json.dumps(entry.see, ensure_ascii=False),
             entry.sha256,
+            entry.description,
         ),
     )
+    _write_edges(conn, entry)
     texts = [text for _, text in entry.chunks]
     if not texts:
         return 0
@@ -381,6 +517,7 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
     init_schema(conn)
 
     entries = scan_entries(root)
+    upgraded = _upgrade_schema(conn, entries)
     stored = _stored_hashes(conn)
 
     if only is not None:
@@ -407,11 +544,8 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
         else:
             changed += 1
 
-    conn.execute(
-        "INSERT INTO meta (key, value) VALUES ('last_indexed', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (str(int(time.time())),),
-    )
+    _meta_set(conn, "last_indexed", str(int(time.time())))
+    _meta_set(conn, "schema_version", str(SCHEMA_VERSION))
     conn.commit()
     conn.close()
 
@@ -421,12 +555,14 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
         "removed": removed,
         "unchanged": unchanged,
         "embedded_chunks": embedded_chunks,
+        "upgraded": upgraded,
         "db": str(db_path),
     }
     if verbose:
+        extra = f", {upgraded} metadata rows upgraded" if upgraded else ""
         print(
             f"index: +{added} ~{changed} -{removed} ={unchanged} "
-            f"({embedded_chunks} chunks embedded) -> {db_path}"
+            f"({embedded_chunks} chunks embedded{extra}) -> {db_path}"
         )
     return stats
 
