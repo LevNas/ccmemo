@@ -257,6 +257,65 @@ Body G.
         assert {"description-length", "unlabeled-link", "amends-unreciprocated"} <= scoped, scoped
 
 
+def test_lint_schema_gate_declaration_env_and_flag():
+    """Schema-2 checks are advisory on an undeclared corpus and enforced once
+    `schema_version: 2` is declared in <root>/../CLAUDE.md (or via --schema /
+    CCMEMO_SCHEMA_VERSION); other checks are enforced regardless."""
+    with tempfile.TemporaryDirectory() as base:
+        root = os.path.join(base, "repo", ".claude", "knowledge", "entries")
+        os.makedirs(root)
+        registry = os.path.join(base, "repo", ".claude", "knowledge", "CLAUDE.md")
+        with open(os.path.join(root, "20260701-100000-alice-nodesc.md"), "w",
+                  encoding="utf-8") as f:
+            f.write('---\ntitle: No description\ntags: "#pitfall"\n---\n\nBody.\n')
+        with open(registry, "w", encoding="utf-8") as f:
+            f.write("# KB\n\n- #pitfall — recurring traps (1)\n")
+
+        def lint(*extra, env=None):
+            e = dict(os.environ)
+            e.pop("CCMEMO_SCHEMA_VERSION", None)
+            if env:
+                e.update(env)
+            return subprocess.run([sys.executable, KB_GRAPH, "--root", root, "--json",
+                                   *extra, "lint"], capture_output=True, text=True,
+                                  timeout=30, env=e)
+
+        # undeclared corpus: advisory only, exit 0
+        res = lint()
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        found = {(f["check"], f["severity"]) for f in json.loads(res.stdout)}
+        assert ("missing-description", "advisory") in found, found
+        # --schema 2 enforces
+        res = lint("--schema", "2")
+        assert res.returncode == 1, res.stdout
+        assert {(f["check"], f["severity"]) for f in json.loads(res.stdout)} == \
+            {("missing-description", "error")}, res.stdout
+        # env overrides the (missing) declaration
+        res = lint(env={"CCMEMO_SCHEMA_VERSION": "2"})
+        assert res.returncode == 1, res.stdout
+        # declaration in CLAUDE.md frontmatter enforces; --schema 1 relaxes it
+        with open(registry, "w", encoding="utf-8") as f:
+            f.write("---\nschema_version: 2\n---\n# KB\n\n- #pitfall — recurring traps (1)\n")
+        res = lint()
+        assert res.returncode == 1, res.stdout
+        assert kb_graph.kb_schema_version(root) == 2
+        res = lint("--schema", "1")
+        assert res.returncode == 0, res.stdout
+        # text output names the advisory block and the declaration to raise
+        res = subprocess.run([sys.executable, KB_GRAPH, "--root", root, "--schema", "1", "lint"],
+                             capture_output=True, text=True, timeout=30)
+        assert "advisory" in res.stdout and "schema_version: 2" in res.stdout, res.stdout
+        assert res.stdout.rstrip().endswith("0 finding(s), 1 advisory"), res.stdout
+        # a non-schema check is enforced even on an undeclared corpus
+        with open(os.path.join(root, "20260701-100000-alice-nodesc.md"), "a",
+                  encoding="utf-8") as f:
+            f.write("\n- see: [gone](2026/07/nope.md) — broken\n")
+        res = lint("--schema", "1")
+        assert res.returncode == 1, res.stdout
+        assert {f["check"] for f in json.loads(res.stdout) if f["severity"] == "error"} == \
+            {"broken-link"}, res.stdout
+
+
 ENTRY_E = "2026/07/20260703-120000-alice-section-only-e.md"
 
 

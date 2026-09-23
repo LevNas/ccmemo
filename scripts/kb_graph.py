@@ -103,6 +103,48 @@ FILENAME_RE = re.compile(r"^\d{8}-\d{6}-.+\.md$")
 DESCRIPTION_MIN_CHARS = 80
 DESCRIPTION_MAX_CHARS = 320
 
+# Conventions are versioned so that upgrading the plugin never turns an
+# existing corpus red overnight. A knowledge base declares the schema it
+# commits to in the frontmatter of `<root>/../CLAUDE.md`
+# (`schema_version: 2`); checks introduced by a later schema are still
+# reported on an older corpus, but as *advisory* findings that do not affect
+# the exit code, until the declaration is raised (see docs/upgrading.md).
+SCHEMA_VERSION_LATEST = 2
+SCHEMA_CHECKS = {
+    2: {"missing-description", "description-length", "unlabeled-link",
+        "amends-unreciprocated", "extends-unreciprocated"},
+}
+
+
+def kb_schema_version(root, override=None):
+    """Schema version the corpus under `root` declares.
+
+    Precedence: `override` (the --schema flag) > CCMEMO_SCHEMA_VERSION env >
+    `schema_version:` in the frontmatter of `<root>/../CLAUDE.md` > 1.
+    """
+    if override is not None:
+        return int(override)
+    env = os.environ.get("CCMEMO_SCHEMA_VERSION", "").strip()
+    if env.isdigit():
+        return int(env)
+    path = os.path.join(root, "..", "CLAUDE.md")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return 1
+    meta, _body = _frontmatter.parse(text)
+    declared = str(meta.get("schema_version", "")).strip()
+    return int(declared) if declared.isdigit() else 1
+
+
+def check_severity(check, schema):
+    """'error' when the check is enforced at `schema`, else 'advisory'."""
+    for version, checks in SCHEMA_CHECKS.items():
+        if check in checks and schema < version:
+            return "advisory"
+    return "error"
+
 
 def parse_frontmatter(text):
     """Normalized frontmatter via the shared parser (hooks/lib/frontmatter.py).
@@ -480,7 +522,8 @@ def cmd_index_md(nodes, out_path):
         sys.stdout.write(text)
 
 
-def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json):
+def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json, schema=1,
+             root=None):
     findings = list(problems)
     for cyc in supersede_cycles(edges):
         for nid in cyc:  # one finding per member so the only_files filter still hits
@@ -500,14 +543,29 @@ def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json):
         keys = {os.path.basename(f) for f in only_files}
         findings = [f for f in findings if os.path.basename(f[0]) in keys]
     findings.sort()
+    enforced = [f for f in findings if check_severity(f[1], schema) == "error"]
+    advisory = [f for f in findings if check_severity(f[1], schema) == "advisory"]
     if as_json:
-        print(json.dumps([{"id": i, "check": c, "detail": d} for i, c, d in findings],
+        print(json.dumps([{"id": i, "check": c, "detail": d,
+                           "severity": check_severity(c, schema)}
+                          for i, c, d in findings],
                          ensure_ascii=False, indent=1))
     else:
-        for nid, check, detail in findings:
+        for nid, check, detail in enforced:
             print(f"{check:>14}  {nid}\n                {detail}")
-        print(f"\n{len(findings)} finding(s)")
-    sys.exit(1 if findings else 0)
+        if advisory:
+            where = os.path.join(root or ".", "..", "CLAUDE.md")
+            print(f"\nadvisory — schema_version {schema} declared; these checks are "
+                  f"enforced from schema_version {SCHEMA_VERSION_LATEST}\n"
+                  f"(declare `schema_version: {SCHEMA_VERSION_LATEST}` in the frontmatter of "
+                  f"{os.path.normpath(where)} once the corpus is migrated — see docs/upgrading.md):")
+            for nid, check, detail in advisory:
+                print(f"{check:>14}  {nid}\n                {detail}")
+        tail = f"\n{len(enforced)} finding(s)"
+        if advisory:
+            tail += f", {len(advisory)} advisory"
+        print(tail)
+    sys.exit(1 if enforced else 0)
 
 
 SEE_SECTION_RE = re.compile(r"^##\s*(関連|Related)\s*$", re.MULTILINE)
@@ -891,6 +949,9 @@ def main():
     p.add_argument("--root", default=".claude/knowledge/entries",
                    help="entries root directory (default: %(default)s)")
     p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument("--schema", type=int, default=None, metavar="N",
+                   help="lint as if the corpus declared schema_version N "
+                        "(default: the declaration in <root>/../CLAUDE.md, else 1)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("stats")
     n = sub.add_parser("neighborhood")
@@ -980,7 +1041,8 @@ def main():
         cmd_index_md(nodes, args.out)
     elif args.cmd == "lint":
         registry = args.registry or os.path.join(args.root, "..", "CLAUDE.md")
-        cmd_lint(nodes, edges, problems, registry, args.files, args.json)
+        cmd_lint(nodes, edges, problems, registry, args.files, args.json,
+                 schema=kb_schema_version(args.root, args.schema), root=args.root)
 
 
 if __name__ == "__main__":

@@ -30,17 +30,19 @@ def run_hook(tool_name, file_path):
     return proc.returncode, proc.stdout
 
 
-def make_repo(base):
+def make_repo(base, schema=None):
     root = os.path.join(base, "repo", ".claude", "knowledge", "entries", "2026", "07")
     os.makedirs(root)
     with open(os.path.join(base, "repo", ".claude", "knowledge", "CLAUDE.md"), "w", encoding="utf-8") as f:
+        if schema:
+            f.write(f"---\nschema_version: {schema}\n---\n")
         f.write("- #pitfall — traps (1)\n")
     return root
 
 
 def test_findings_reported_as_warning():
     with tempfile.TemporaryDirectory() as base:
-        root = make_repo(base)
+        root = make_repo(base, schema=2)
         path = os.path.join(root, "20260704-100000-alice-bad.md")
         with open(path, "w", encoding="utf-8") as f:
             f.write('---\ntitle: Bad\ntags: "#pitfall"\n---\n\n- see: [x](2026/07/nope.md)\n')
@@ -52,6 +54,29 @@ def test_findings_reported_as_warning():
         check("missing-description reported", "missing-description" in reason, reason)
         check("unlabeled-link reported", "unlabeled-link" in reason, reason)
         check("broken-link reported", "broken-link" in reason, reason)
+        check("no advisory tail at schema 2", "advisory" not in reason, reason)
+
+
+def test_undeclared_corpus_gets_one_line_advisory():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_repo(base)  # no schema_version declaration
+        path = os.path.join(root, "20260704-100000-alice-old.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('---\ntitle: Old\ntags: "#pitfall"\n---\n\nOld entry, no description.\n')
+        code, out = run_hook("Edit", path)
+        data = json.loads(out)
+        reason = data.get("reason", "")
+        check("advisory-only: warn with one line", data.get("decision") == "warn"
+              and reason.count("\n") == 0 and "1 advisory" in reason, reason)
+        check("advisory-only: names the declaration", "schema_version: 2" in reason, reason)
+        # an enforced finding plus advisory ones: list + count tail
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("- see: [x](2026/07/nope.md)\n")
+        code, out = run_hook("Edit", path)
+        reason = json.loads(out).get("reason", "")
+        check("mixed: enforced listed", "broken-link" in reason, reason)
+        check("mixed: advisory counted, not listed",
+              "+2 advisory" in reason and "missing-description:" not in reason, reason)
 
 
 def test_clean_entry_is_silent():
@@ -85,6 +110,7 @@ def test_non_entry_and_non_write_ignored():
 
 if __name__ == "__main__":
     test_findings_reported_as_warning()
+    test_undeclared_corpus_gets_one_line_advisory()
     test_clean_entry_is_silent()
     test_non_entry_and_non_write_ignored()
     if FAILURES:

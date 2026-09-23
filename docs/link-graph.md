@@ -133,6 +133,16 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 | `unlabeled-link` | a `see:`/`ref:`/`amends:`/`extends:` line with nothing after the link — the "— why to follow it" label is what lets a reader decide without opening the target |
 | `amends-unreciprocated` / `extends-unreciprocated` | the target of a correction / elaboration does not link back to it (any link kind) and is not superseded by it — readers of the target would never learn of the correction |
 
+**Schema-gated checks.** The last four rows are enforced only when the
+knowledge base declares `schema_version: 2` in the frontmatter of
+`<root>/../CLAUDE.md` (the scaffolded `CLAUDE.md` does). On a corpus without
+that declaration they are still listed, under an *advisory* heading, but do
+not affect the exit code — so updating the plugin never turns a pre-commit
+lint red before the corpus is migrated. `--schema N` lints as if the corpus
+declared N (`--json` output carries `severity`: `error` | `advisory`);
+`CCMEMO_SCHEMA_VERSION` does the same for a shell. Migration steps:
+[upgrading.md](upgrading.md).
+
 The post-write hook `hooks/postwrite_kb_lint.py` runs `lint <file>` on every
 knowledge entry a Write/Edit touches and returns the findings as a warning in
 the same turn (advisory — a write cannot be undone — but the entry is still in

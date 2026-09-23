@@ -1,3 +1,7 @@
+---
+schema_version: 2   # ccmemo conventions this knowledge base commits to (see docs/upgrading.md)
+---
+
 # Knowledge Base
 
 Aggregated tacit knowledge from Claude Code work sessions.

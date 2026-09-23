@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.26.1] - 2026-09-23
+
+### Added
+- `schema_version` declaration: a knowledge base states the entry
+  conventions it commits to in the frontmatter of
+  `.claude/knowledge/CLAUDE.md` (`schema_version: 2`; the scaffolded
+  templates carry it). `kb_graph.py lint` enforces the four checks added in
+  1.26.0 only at schema 2; on an undeclared corpus (schema 1) they are still
+  reported, as `advisory` findings that do not affect the exit code, so
+  updating the plugin never turns a pre-commit lint red before the corpus is
+  migrated. `--schema N` previews a higher declaration;
+  `CCMEMO_SCHEMA_VERSION` does the same per shell; `--json` findings carry
+  `severity`.
+- `hooks/postwrite_kb_lint.py`: advisory findings are summarised in one line
+  instead of listed, so an unmigrated corpus is nudged, not nagged.
+- `docs/upgrading.md` (and `docs/upgrading.ja.md`): how upgrades reach a
+  corpus and the migration steps for 1.24.0 and 1.26.x (bulk description
+  recipe, link labels, raising the declaration). Linked from the README.
+
+Upgrade notes: [docs/upgrading.md](docs/upgrading.md#126-descriptions-and-link-labels).
+
 ## [1.26.0] - 2026-09-23
 
 ### Added
@@ -73,6 +94,8 @@ All notable changes to this project will be documented in this file.
 - Default search output prints a `when:` line from the frontmatter
   `description` when present; the keyword snippet no longer starts with the
   H1 (it repeated the title).
+
+Upgrade notes: [docs/upgrading.md](docs/upgrading.md#124-tags-and-status).
 
 ## [1.24.0] - 2026-09-23
 
