@@ -35,12 +35,13 @@ cp assets/knowledge-CLAUDE.md .claude/knowledge/CLAUDE.md
    future reader should open it — not a summary (the title already states the conclusion).
    Write it from the situation side: the symptom, the question, the decision being made.
    Put the most typical situation first (search summaries show the first ~80 chars), then
-   two or three more, ending in "…に開く" / "open when …". Hub entries (`synthesis` /
-   `overview`) add "…に関する派生エントリへのハブでもある". Never copy the title, never
-   write "this entry records …", and do not use double quotes inside the value.
-   Example: `description: "プラグインの hook を修正して main にマージしたのに利用側で直らないとき、
-   /plugin update が already at the latest version と言うのに古い挙動が続くとき、修正 PR に
-   version bump を同梱すべきか迷ったときに開く。"`
+   two or three more, phrased as "open this when …" in the language the entry is written
+   in. Hub entries (`synthesis` / `overview`) end by saying they are also the hub for the
+   topic's related entries. Never copy the title, never write "this entry records …", and
+   do not use double quotes inside the value.
+   Example: `description: "Open when a plugin fix merged to main does not reach users,
+   when /plugin update says already at the latest version yet the old behaviour persists,
+   or when deciding whether a fix PR must carry the version bump."`
 
 ## Entry Location
 - `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` — one file per entry, organized by year/month

@@ -1,5 +1,7 @@
 # Upgrading
 
+> 日本語版: [upgrading.ja.md](upgrading.ja.md)
+
 How to move an existing knowledge base to a newer ccmemo. Only versions that
 need something from you have a section here; everything else upgrades
 silently. The [CHANGELOG](../CHANGELOG.md) links here from each such release.
@@ -41,27 +43,29 @@ several) only works once descriptions exist.
 
 `kb_graph.py lint` gained four checks, enforced at `schema_version: 2` and
 advisory below it: `missing-description`, `description-length` (80–320
-chars), `unlabeled-link` (a `see:`/`ref:`/`amends:`/`extends:` line with
+characters), `unlabeled-link` (a `see:`/`ref:`/`amends:`/`extends:` line with
 nothing after the link) and `amends-` / `extends-unreciprocated`. New entries
 written by `/record-knowledge` already carry a description.
 
 ### Migrating an existing corpus
 
-1. See where you stand: `python3 scripts/kb_graph.py --root .claude/knowledge/entries --schema 2 lint`
+1. See where you stand:
+   `python3 scripts/kb_graph.py --root .claude/knowledge/entries --schema 2 lint`
    lists every entry that would fail. `kb_graph.py index-md` prints how many
    still lack a description.
 2. Add descriptions in batches. A description is not a summary (the title
    already states the conclusion): it names the situations in which a future
-   reader should open the entry — the symptom, the question, the decision —
-   most typical first, 100–300 chars, ending in "…に開く" / "open when …".
-   Hub entries (`synthesis` / `overview`) end with "…へのハブでもある".
-   Write it from the entry's problem / background section; do not copy the
-   title, do not use double quotes inside the value. On a 280-entry corpus
-   this took ten batches of 28 entries, each delegated to a Sonnet subagent
-   that read the first 60–80 lines of every entry, with a machine check after
-   each batch (every entry has the field, the shared parser reads it, length
-   in range, no `"` inside). Put the rules and five good examples in one file
-   and hand that file to each batch.
+   reader should open the entry — the symptom, the question, the decision
+   being made — most typical first, 100–300 characters, phrased as
+   "open this when …" in the language the entry is written in. Hub entries
+   (`synthesis` / `overview`) end by saying they are also the hub for their
+   topic's related entries. Write it from the entry's problem or background
+   section; do not copy the title, and do not use double quotes inside the
+   value. On a 280-entry corpus this took ten batches of 28 entries, each
+   delegated to a Sonnet subagent that read the first 60–80 lines of every
+   entry, with a machine check after each batch (every entry has the field,
+   the shared parser reads it, length in range, no `"` inside). Put the rules
+   and five good examples in one file and hand that file to each batch.
 3. Label the links: every `- see:` / `ref:` / `amends:` / `extends:` line
    ends with `— why to follow it`, on the same line (the lint reads one line
    at a time; a label wrapped onto the next line counts as missing).
@@ -78,10 +82,10 @@ declaration is raised.
 Note for corpora edited with the redact hook active: a bulk edit passes every
 entry through `postwrite_redact_entries.py`, which is also a chance for it to
 catch secrets that were already in the body (it did, on the reference corpus:
-a raw 1Password item id and a personal e-mail). It can also over-match
-e-mail-shaped strings such as systemd unit names (`app-…@autostart.service`)
-or placeholder SSH URLs; restore those with a shell edit, not with the Edit
-tool, or the hook fires again.
+a raw 1Password item id and a personal e-mail address). It can also
+over-match e-mail-shaped strings such as systemd unit names
+(`app-…@autostart.service`) or placeholder SSH URLs; restore those with a
+shell edit, not with the Edit tool, or the hook fires again.
 
 ## 1.24.0 — one frontmatter parser, list-form `tags`, `status` default
 

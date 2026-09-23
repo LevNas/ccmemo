@@ -118,7 +118,7 @@ All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md
   `stats` / `neighborhood` / `path` / `lineage` / `link-add` / `lint`
 - [docs/upgrading.md](docs/upgrading.md) — moving an existing knowledge base
   to a newer ccmemo: what upgrades silently, the `schema_version` declaration,
-  and the migration steps per release
+  and the migration steps per release ([日本語](docs/upgrading.ja.md))
 - [docs/architecture.md](docs/architecture.md) — scripts & skill wiring, subagent
   delegation, Context Guard
 - [docs/examples.md](docs/examples.md) — personal & team workflow walkthroughs

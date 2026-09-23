@@ -17,9 +17,9 @@ All notable changes to this project will be documented in this file.
   `severity`.
 - `hooks/postwrite_kb_lint.py`: advisory findings are summarised in one line
   instead of listed, so an unmigrated corpus is nudged, not nagged.
-- `docs/upgrading.md`: how upgrades reach a corpus and the migration steps
-  for 1.24.0 and 1.26.x (bulk description recipe, link labels, raising the
-  declaration). Linked from the README.
+- `docs/upgrading.md` (and `docs/upgrading.ja.md`): how upgrades reach a
+  corpus and the migration steps for 1.24.0 and 1.26.x (bulk description
+  recipe, link labels, raising the declaration). Linked from the README.
 
 Upgrade notes: [docs/upgrading.md](docs/upgrading.md#126x--description-and-link-labels-become-conventions-schema_version-2).
 
