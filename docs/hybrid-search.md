@@ -101,10 +101,14 @@ link carries — in the OKF `index.md` shape:
   - see 20260922-090000 — the upstream context (+5)
 ```
 
-- Neighbours are identified by the `YYYYMMDD-HHMMSS` filename prefix (unique
-  in a ccmemo KB; `kb_graph.py` resolves it as a filename substring, and a
-  file glob `*/<id>-*.md` finds the path) plus the link's label — the reason
-  to follow it — rather than by their long title. `(+N)` counts edges not
+- Neighbours are identified by a short **handle** plus the link's label — the
+  reason to follow it — rather than by their long title. The handle is the
+  shortest name that is unique in the corpus: the `YYYYMMDD-HHMMSS` filename
+  prefix for almost every entry, the full filename when two entries were
+  recorded in the same second (they share the prefix), the relpath when even
+  the filename repeats (non-dated corpora). The index computes it, so the
+  printed handle is always a valid unique substring for `kb_graph.py
+  neighborhood <handle>` and for a file glob `*/<handle>*`. `(+N)` counts edges not
   shown. Entries without a `description` fall back to their lead paragraph,
   marked `(lead)`. A non-active status is flagged, e.g. `(superseded)`.
 - Byte budget: on a 288-entry Japanese KB ten summaries with the defaults

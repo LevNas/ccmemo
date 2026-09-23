@@ -35,9 +35,10 @@ Start with `--summary`: per hit it prints the title, the `description` (when
 to open the entry) and the typed links with their labels, in ~700 bytes per
 hit — ten summaries cost less than opening one body. Pick the ONE entry whose
 description or link labels match the question and Read only that. Neighbours
-appear as `- see 20260727-025736 — <label>`: the id is the filename prefix
-(`kb_graph.py neighborhood 20260727-025736`, or glob `*/20260727-025736-*.md`
-to Read it). `(lead)` marks a fallback (no description yet); `(superseded)`
+appear as `- see 20260727-025736 — <label>`: the handle is the filename prefix,
+or the full filename when two entries share a prefix (recorded in the same
+second). Either way it is unique: `kb_graph.py neighborhood <handle>`, or glob
+`*/<handle>*` to Read it. `(lead)` marks a fallback (no description yet); `(superseded)`
 means go to the current authority instead. Drop `--summary` for keyword
 snippets; add `--linked-from 1` to see which hub links to a leaf; `--edges -1`
 on a hub lists every leaf.
