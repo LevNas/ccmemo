@@ -93,4 +93,12 @@ Non-active entries carry a body-top warning banner so direct readers see the sta
   `tags: "#tag1 #tag2"` is still read by every tool — never bulk-rewrite old entries
 - `status:` omitted or blank means `active`; the index, the graph CLI and the prompt
   hook all apply that same default
+- `description:` is required: the entry's *trigger condition* (when to open it — the
+  symptom, question or decision), 80–320 chars, most typical situation first. Not a
+  summary; the title already states the conclusion. Search results and the prompt
+  hook show it so one entry can be chosen without opening several
+- Every `- see:` / `ref:` / `amends:` / `extends:` line carries a label after the link
+  (`— why to follow it`); `amends:` / `extends:` targets must link back (or be
+  superseded by) the entry. `kb_graph.py lint` checks all of this, and the post-write
+  hook runs it on every entry you save
 - See `/record-knowledge` skill for full details

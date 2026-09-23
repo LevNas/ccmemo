@@ -67,6 +67,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/postwrite_check_md_links.py\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/postwrite_kb_lint.py\"",
+            "timeout": 5
           }
         ]
       }

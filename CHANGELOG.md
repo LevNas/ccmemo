@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.26.0] - 2026-09-23
+
+### Added
+- `kb_graph.py lint`: four checks that make the trigger-condition
+  `description` and the link labels a convention the tooling enforces, not
+  a habit — `missing-description`, `description-length` (80–320 chars),
+  `unlabeled-link` (a `see:`/`ref:`/`amends:`/`extends:` line with nothing
+  after the link) and `amends-unreciprocated` / `extends-unreciprocated`
+  (the target of a correction or elaboration neither links back nor is
+  superseded by the source). `load_graph` nodes now carry `description`
+  and `superseded_by`.
+- `hooks/postwrite_kb_lint.py` (PostToolUse on Write/Edit): runs
+  `kb_graph.py lint <file>` on every knowledge entry just written and
+  returns the findings as a warning in the same turn, so a missing
+  description or an unlabeled link is fixed while the entry is still in
+  context. Advisory, never blocks; silent on clean entries and non-entries.
+- UserPromptSubmit hook: each injected candidate now shows a `when:` line
+  with its `description` (cut to `CCMEMO_SEARCH_DESC_CHARS`, default 80),
+  so one candidate can be chosen without opening several. Read in the same
+  single parser call as status/title — no extra interpreter start.
+- record-knowledge procedure and the knowledge `CLAUDE.md` templates:
+  `description` is a required field, defined as the entry's trigger
+  condition (when to open it), with the writing rules and an example.
+- `tests/test_postwrite_kb_lint.py`; new cases in `tests/test_kb_graph.py`
+  and `tests/test_knowledge_search_hook.py`.
+
+### Changed
+- `lint` on a corpus written before this release reports
+  `missing-description` for every entry until descriptions are added
+  (the checks are on by default, per the design decision that owns them);
+  `kb_graph.py index-md` shows how many are still missing.
+
 ## [1.25.0] - 2026-09-23
 
 ### Added

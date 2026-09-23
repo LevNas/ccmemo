@@ -13,6 +13,10 @@ set -euo pipefail
 
 MAX_RESULTS=5
 MIN_WORD_LEN=2
+# Each candidate also shows its frontmatter `description` (the trigger
+# condition: when to open the entry), cut to this many characters, so the
+# model can pick one candidate without opening several.
+DESC_CHARS=${CCMEMO_SEARCH_DESC_CHARS:-80}
 HIT_COUNT_LIMIT=50
 ENTRIES_DIR=".claude/knowledge/entries"
 ALLOWED_STATUS="${CCMEMO_SEARCH_STATUS:-active}"
@@ -73,13 +77,14 @@ mapfile -t ranked < <(
 )
 # Separator is US (0x1f), not tab: bash `read` collapses runs of whitespace
 # IFS characters, which would shift columns whenever superseded_by is empty.
-declare -A fm_status fm_superseded fm_title
-while IFS=$'\x1f' read -r fpath fstatus fsuperseded ftitle; do
+declare -A fm_status fm_superseded fm_title fm_desc
+while IFS=$'\x1f' read -r fpath fstatus fsuperseded ftitle fdesc; do
   [ -n "$fpath" ] || continue
   fm_status[$fpath]=$fstatus
   fm_superseded[$fpath]=$fsuperseded
   fm_title[$fpath]=$ftitle
-done < <(python3 "$FRONTMATTER_PY" --sep $'\x1f' --fields status,superseded_by,title -- "${ranked[@]}" 2>/dev/null || true)
+  fm_desc[$fpath]=$fdesc
+done < <(python3 "$FRONTMATTER_PY" --sep $'\x1f' --fields status,superseded_by,title,description -- "${ranked[@]}" 2>/dev/null || true)
 
 # Walk the ranking until MAX_RESULTS allowed entries are collected, so
 # entries dropped by the status filter do not consume result slots.
@@ -104,6 +109,13 @@ for filepath in "${ranked[@]}"; do
     note="${note}]"
   fi
   RESULTS="${RESULTS}- ${title} (${filepath})${note}"$'\n'
+  desc=${fm_desc[$filepath]:-}
+  if [ -n "$desc" ] && [ "$DESC_CHARS" -gt 0 ]; then
+    if [ "${#desc}" -gt "$DESC_CHARS" ]; then
+      desc="${desc:0:$DESC_CHARS}…"
+    fi
+    RESULTS="${RESULTS}  when: ${desc}"$'\n'
+  fi
   result_count=$((result_count + 1))
   [ "$result_count" -lt "$MAX_RESULTS" ] || break
 done

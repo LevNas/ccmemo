@@ -128,6 +128,17 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 | `superseded-broken` | `superseded_by:` target resolves to no entry |
 | `superseded-missing-successor` | `status: superseded` but no `superseded_by:` |
 | `supersede-cycle` | `superseded_by:` chain loops — reported once per member so file scoping still catches it |
+| `missing-description` | no `description:` — the trigger condition (when to open the entry) that search summaries and the prompt hook show |
+| `description-length` | description under 80 chars (cannot name a situation) or over 320 (reads as a summary) |
+| `unlabeled-link` | a `see:`/`ref:`/`amends:`/`extends:` line with nothing after the link — the "— why to follow it" label is what lets a reader decide without opening the target |
+| `amends-unreciprocated` / `extends-unreciprocated` | the target of a correction / elaboration does not link back to it (any link kind) and is not superseded by it — readers of the target would never learn of the correction |
+
+The post-write hook `hooks/postwrite_kb_lint.py` runs `lint <file>` on every
+knowledge entry a Write/Edit touches and returns the findings as a warning in
+the same turn (advisory — a write cannot be undone — but the entry is still in
+context, so the fix is one edit away). The conventions are owned by ccmemo;
+another plugin or a merge gate wanting the same checks calls this CLI instead
+of re-implementing them.
 
 Passing file arguments limits the *reported* findings to those files (the
 graph is still built from all entries), which is exactly what a pre-commit
