@@ -29,6 +29,18 @@ cp assets/knowledge-CLAUDE.md .claude/knowledge/CLAUDE.md
 2. For new discoveries without enough detail yet, write a temporary note in the working directory and convert to an entry later
 3. Do NOT add links to subdirectory `CLAUDE.md` files — use tag search to find entries instead
 4. Act autonomously — create and edit entries without asking for user confirmation
+5. Every entry carries a `description:` — **required**, checked by `kb_graph.py lint`
+   (`missing-description`, `description-length`: 80–320 chars) and by the post-write hook.
+   It is the entry's *trigger condition*, the same role as a skill's `description`: when a
+   future reader should open it — not a summary (the title already states the conclusion).
+   Write it from the situation side: the symptom, the question, the decision being made.
+   Put the most typical situation first (search summaries show the first ~80 chars), then
+   two or three more, ending in "…に開く" / "open when …". Hub entries (`synthesis` /
+   `overview`) add "…に関する派生エントリへのハブでもある". Never copy the title, never
+   write "this entry records …", and do not use double quotes inside the value.
+   Example: `description: "プラグインの hook を修正して main にマージしたのに利用側で直らないとき、
+   /plugin update が already at the latest version と言うのに古い挙動が続くとき、修正 PR に
+   version bump を同梱すべきか迷ったときに開く。"`
 
 ## Entry Location
 - `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` — one file per entry, organized by year/month
@@ -51,6 +63,7 @@ superseded_by: YYYY/MM/newer-entry-slug.md   # only when status: superseded
 tags:
   - "#tag1"
   - "#tag2"
+description: "<trigger condition — WHEN to open this entry, not what it says>"
 ---
 
 <body — concrete facts, procedures, code examples, etc.>

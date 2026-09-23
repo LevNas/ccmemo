@@ -44,12 +44,15 @@ def _make_workdir():
     return workdir, bindir
 
 
-def _write_entry(workdir, name, title, body, status=None, superseded_by=None):
+def _write_entry(workdir, name, title, body, status=None, superseded_by=None,
+                 description=None):
     lines = ["---", f'title: "{title}"']
     if status is not None:
         lines.append(f"status: {status}")
     if superseded_by is not None:
         lines.append(f"superseded_by: {superseded_by}")
+    if description is not None:
+        lines.append(f'description: "{description}"')
     lines += ["---", "", body, ""]
     path = os.path.join(workdir, ".claude", "knowledge", "entries", "2026", name)
     with open(path, "w", encoding="utf-8") as f:
@@ -101,6 +104,28 @@ def test_default_excludes_non_active():
         check("default: active surfaces", "Active entry" in ctx, ctx)
         check("default: superseded excluded", "b-superseded.md" not in ctx, ctx)
         check("default: deprecated excluded", "c-deprecated.md" not in ctx, ctx)
+    finally:
+        shutil.rmtree(workdir)
+
+
+def test_description_line_shown_and_truncated():
+    workdir, bindir = _make_workdir()
+    try:
+        long_desc = "開くべき状況" * 30  # 180 chars > default 80
+        _write_entry(workdir, "d-desc.md", "Described entry", "alphaword",
+                     status="active", description=long_desc)
+        _write_entry(workdir, "e-nodesc.md", "Bare entry", "alphaword", status="active")
+        code, ctx = _run_hook(workdir, bindir)
+        check("description: hook exits 0", code == 0, f"code={code}")
+        lines = ctx.splitlines()
+        i = next((k for k, ln in enumerate(lines) if "Described entry" in ln), -1)
+        check("description: when-line follows its title",
+              i >= 0 and lines[i + 1].startswith("  when: 開くべき状況"), ctx)
+        check("description: truncated with ellipsis",
+              i >= 0 and lines[i + 1].endswith("…") and len(lines[i + 1]) < 100, ctx)
+        j = next((k for k, ln in enumerate(lines) if "Bare entry" in ln), -1)
+        check("description: absent -> no when-line",
+              j >= 0 and (j + 1 == len(lines) or not lines[j + 1].startswith("  when:")), ctx)
     finally:
         shutil.rmtree(workdir)
 
@@ -225,6 +250,7 @@ def main():
             print(f"skip: required tool not on PATH: {tool}")
             return 0
     test_default_excludes_non_active()
+    test_description_line_shown_and_truncated()
     test_missing_status_treated_as_active()
     test_widened_allowlist_annotates()
     test_all_disables_filter()

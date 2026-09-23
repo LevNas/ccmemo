@@ -75,4 +75,9 @@ Non-active entries carry a body-top warning banner so direct readers see the sta
 - Do NOT add links to subdirectory CLAUDE.md files — use tag search to find entries
 - Existing entries without timestamp prefix remain as-is (no rename)
 - New tags **must** be added to the Tag Registry within the same operation
+- `description:` is required: the entry's *trigger condition* (when to open it — the
+  symptom, question or decision), 80–320 chars, most typical situation first. Not a
+  summary; the title already states the conclusion
+- Every link line carries a label after the link (`— why to follow it`); `amends:` /
+  `extends:` targets must link back. `kb_graph.py lint` checks this on every save
 - See `/record-knowledge` skill for full details

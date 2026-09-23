@@ -83,6 +83,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks"))
 from lib import frontmatter as _frontmatter  # noqa: E402
 from lib.edges import LINK_RE, LOOSE_LINK_RE  # noqa: E402,F401  (shared with kb_index)
+from lib import edges as _edges  # noqa: E402
 import tempfile
 from collections import deque
 
@@ -96,6 +97,11 @@ TAG_REGISTRY_RES = (
     re.compile(r"^`(#[\w\-]+)`$", re.MULTILINE),
 )
 FILENAME_RE = re.compile(r"^\d{8}-\d{6}-.+\.md$")
+# `description:` is the entry's trigger condition (when to open it). Shorter
+# than the floor it cannot name a situation; longer than the ceiling it has
+# become a summary. Measured on a 289-entry corpus: median 177 chars.
+DESCRIPTION_MIN_CHARS = 80
+DESCRIPTION_MAX_CHARS = 320
 
 
 def parse_frontmatter(text):
@@ -127,14 +133,32 @@ def load_graph(root):
             with open(path, encoding="utf-8", errors="replace") as f:
                 text = f.read()
             meta = parse_frontmatter(text)
+            sup = meta.get("superseded_by", "")
             nodes[nid] = {
                 "title": meta.get("title", ""),
                 "tags": set(meta.get("tags", [])),
                 "status": meta.get("status", ""),
                 "description": meta.get("description", ""),
+                "superseded_by": sup.split("#")[0].strip(),
             }
             if not meta.get("title"):
                 problems.append((nid, "missing-title", "no frontmatter title"))
+            desc = " ".join(meta.get("description", "").split())
+            if not desc:
+                problems.append((nid, "missing-description",
+                                 "no description: (trigger condition — when to open this entry)"))
+            elif len(desc) < DESCRIPTION_MIN_CHARS:
+                problems.append((nid, "description-length",
+                                 f"{len(desc)} chars, under {DESCRIPTION_MIN_CHARS}: "
+                                 "too short to name a situation"))
+            elif len(desc) > DESCRIPTION_MAX_CHARS:
+                problems.append((nid, "description-length",
+                                 f"{len(desc)} chars, over {DESCRIPTION_MAX_CHARS}: "
+                                 "reads as a summary, not a trigger"))
+            for e in _edges.body_link_edges({}, text):
+                if not e["label"]:
+                    problems.append((nid, "unlabeled-link",
+                                     f"{e['rel']}: ({e['target']}) has no “— why” label"))
             if not FILENAME_RE.match(fn):
                 problems.append((nid, "filename", "does not match <date>-<time>-...-<slug>.md"))
             for lineno, line in enumerate(text.splitlines(), 1):
@@ -142,7 +166,6 @@ def load_graph(root):
                     problems.append((nid, "malformed-link",
                                      f"line {lineno}: does not parse as a link, "
                                      f"no edge produced: {line.strip()[:80]}"))
-            sup = meta.get("superseded_by", "")
             status = meta.get("status", "")
             if sup:
                 if status != "superseded":
@@ -201,6 +224,30 @@ def load_graph(root):
             continue
         seen.add(key)
         deduped.append(e)
+    # A correction (amends) or elaboration (extends) that its target does not
+    # point back to is invisible to anyone reading the target: require a
+    # link of any kind back to the source, or a supersede chain from the
+    # target that ends at the source (the replacement's amends back-link).
+    pairs = {(s, d) for s, d, _k, _r in deduped}
+
+    def supersede_chain_reaches(start, goal, limit=16):
+        cur = start
+        for _ in range(limit):
+            cur = nodes.get(cur, {}).get("superseded_by", "")
+            if not cur:
+                return False
+            if cur == goal:
+                return True
+        return False
+
+    for src, dst, kind, _res in deduped:
+        if kind not in ("amends", "extends"):
+            continue
+        if (dst, src) in pairs or supersede_chain_reaches(dst, src):
+            continue
+        problems.append((src, f"{kind}-unreciprocated",
+                         f"{kind}: ({dst}) does not link back — add a see/ref line "
+                         "there, or set its superseded_by to this entry"))
     return nodes, deduped, problems
 
 

@@ -185,12 +185,76 @@ def test_cli_lint_clean_exits_zero():
         os.makedirs(root)
         with open(os.path.join(root, "20260701-100000-alice-clean.md"), "w",
                   encoding="utf-8") as f:
-            f.write('---\ntitle: Clean\ntags: "#pitfall"\n---\n\nNothing wrong here.\n')
+            f.write('---\ntitle: Clean\ntags: "#pitfall"\n'
+                    'description: "Open this when a fixture needs a trigger condition '
+                    'long enough to pass the length floor of the lint."\n'
+                    '---\n\nNothing wrong here.\n')
         with open(os.path.join(base, "repo", ".claude", "knowledge", "CLAUDE.md"), "w",
                   encoding="utf-8") as f:
             f.write("- #pitfall — recurring traps (1)\n")
         res = run_cli(root, "lint")
         assert res.returncode == 0, (res.stdout, res.stderr)
+
+
+ENTRY_AM = "2026/07/20260704-100000-alice-amends-f.md"
+ENTRY_EX = "2026/07/20260704-110000-alice-extends-g.md"
+
+
+def test_lint_description_labels_and_reciprocity():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+
+        def write(rel, text):
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+                f.write(text)
+
+        # F amends A without A linking back; short description; unlabeled see.
+        write(ENTRY_AM, f"""---
+title: Amends F
+created: 2026-07-04
+status: active
+tags: "#pitfall"
+description: "too short"
+---
+
+Body F.
+
+- amends: [Topic A]({ENTRY_A}) — corrects one paragraph of A
+- see: [Orphan C]({ENTRY_C})
+""")
+        # G extends B, and B is superseded by G: reciprocity via superseded_by.
+        write(ENTRY_EX, f"""---
+title: Extends G
+created: 2026-07-04
+status: active
+tags: "#pitfall"
+description: "{'x' * 400}"
+---
+
+Body G.
+
+- extends: [Topic B]({ENTRY_B}) — develops B
+""")
+        with open(os.path.join(root, ENTRY_B), encoding="utf-8") as f:
+            b = f.read()
+        write(ENTRY_B, b.replace("status: active\n", f"status: superseded\nsuperseded_by: {ENTRY_EX}\n", 1))
+
+        nodes, _edges, problems = kb_graph.load_graph(root)
+        checks = {(nid, check) for nid, check, _ in problems}
+        assert (ENTRY_A, "missing-description") in checks, checks
+        assert (ENTRY_AM, "description-length") in checks, checks
+        assert (ENTRY_EX, "description-length") in checks, checks
+        assert (ENTRY_AM, "unlabeled-link") in checks, checks
+        assert (ENTRY_AM, "amends-unreciprocated") in checks, checks
+        assert (ENTRY_EX, "extends-unreciprocated") not in checks, checks
+        assert nodes[ENTRY_B]["superseded_by"] == ENTRY_EX, nodes[ENTRY_B]
+        # The labeled amends line itself is not reported as unlabeled.
+        unl = [d for n, c, d in problems if n == ENTRY_AM and c == "unlabeled-link"]
+        assert unl == [f"see: ({ENTRY_C}) has no “— why” label"], unl
+        # Scoped lint on F still surfaces its own findings (post-write hook usage).
+        res = run_cli(root, "--json", "lint", os.path.join(root, ENTRY_AM))
+        scoped = {f["check"] for f in json.loads(res.stdout)}
+        assert {"description-length", "unlabeled-link", "amends-unreciprocated"} <= scoped, scoped
 
 
 ENTRY_E = "2026/07/20260703-120000-alice-section-only-e.md"
@@ -327,7 +391,10 @@ def make_lineage_kb(base):
                  f"status: {status}"]
         if superseded_by:
             lines.append(f"superseded_by: {superseded_by}")
-        lines += ['tags: "#design"', "---", "", f"Body of {title}.", ""]
+        lines += ['tags: "#design"',
+                  f'description: "Open when a lineage fixture named {title} needs a '
+                  'trigger condition long enough for the length floor."',
+                  "---", "", f"Body of {title}.", ""]
         with open(os.path.join(root, relpath), "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + links)
 
@@ -380,7 +447,11 @@ def test_cli_lint_supersede_checks_and_cycle_scoping():
         assert by_check.get("superseded-broken") == [LIN_D], by_check
         assert by_check.get("superseded-missing-successor") == [LIN_E], by_check
         assert by_check.get("supersede-cycle") == [LIN_G, LIN_H], by_check
-        assert len(findings) == 5, findings
+        # E extends C but C neither links back nor is superseded by E;
+        # C amends A and A's supersede chain (A→B→C) ends at C, so that one is fine.
+        assert by_check.get("extends-unreciprocated") == [LIN_E], by_check
+        assert "amends-unreciprocated" not in by_check, by_check
+        assert len(findings) == 6, findings
         # cycle findings are reported per member, so file scoping still hits
         res = run_cli(root, "--json", "lint", os.path.join(root, LIN_G))
         scoped = json.loads(res.stdout)
@@ -462,8 +533,10 @@ def test_lint_malformed_link_exactly_one_with_line_number():
         assert (ENTRY_F, ENTRY_A) in pairs, pairs
         assert (ENTRY_F, ENTRY_B) not in pairs, pairs
         assert len(edges) == len(edges0) + 1, (len(edges0), len(edges))
-        # no other finding changes
-        assert len(problems) == len(problems0) + 1, (problems0, problems)
+        # no other finding changes: F adds exactly malformed-link and (having
+        # no description: line, which would shift the line number under test)
+        # missing-description
+        assert len(problems) == len(problems0) + 2, (problems0, problems)
         # CLI surface: check name and exit code
         res = run_cli(root, "--json", "lint")
         assert res.returncode == 1, res.stdout
