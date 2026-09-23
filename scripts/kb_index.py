@@ -137,6 +137,11 @@ class Entry:
     sha256: str
     description: str = ""                # frontmatter trigger condition
     handle: str = ""                     # shortest corpus-unique short name (assign_handles)
+    id: str = ""                         # frontmatter id (uuid4): identity across renames/copies
+    generated_by: str = ""               # schema 3 trust family (hooks/lib/trust.py)
+    generated_at: str = ""
+    verified_tier: str = ""              # '' | machine | human — derived from verified
+    verified_at: str = ""
     edges: list[dict] = field(default_factory=list)  # [{target, rel, label}]
     chunks: list[tuple[str, str]] = field(default_factory=list)  # (chunk_id, text)
 
@@ -146,11 +151,14 @@ class Entry:
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
 from lib import frontmatter as _frontmatter  # noqa: E402
 from lib import edges as _edges  # noqa: E402
+from lib import trust as _trust  # noqa: E402
 
 # Bump when the *derived* columns/tables change shape. An older DB is upgraded
 # in place by re-reading metadata + edges from the Markdown — no re-embedding.
 # 3: entries.handle (shortest corpus-unique short name for the summary mode).
-SCHEMA_VERSION = 3
+# 4: entries.id / generated_by / generated_at / verified_tier / verified_at
+#    (schema_version 3 of the entry format) and the `moves` table.
+SCHEMA_VERSION = 4
 
 
 def _split_frontmatter(content: str) -> tuple[dict, str]:
@@ -175,6 +183,8 @@ def parse_entry(path: Path, root: Path) -> Entry | None:
     except ValueError:
         relpath = path.name
 
+    gen = _trust.generated_of(fm)
+    tier, tier_at = _trust.verified_tier(fm)
     entry = Entry(
         path=path,
         relpath=relpath,
@@ -188,6 +198,11 @@ def parse_entry(path: Path, root: Path) -> Entry | None:
         sha256=sha,
         description=fm["description"],
         edges=edges,
+        id=str(fm.get("id", "") or "").strip(),
+        generated_by=gen["by"] if gen else "",
+        generated_at=gen["at"] if gen else "",
+        verified_tier=tier,
+        verified_at=tier_at,
     )
     entry.chunks = _chunk_entry(entry)
     return entry
@@ -332,6 +347,18 @@ def init_schema(conn: sqlite3.Connection) -> None:
     )
     _ensure_column(conn, "entries", "description", "TEXT DEFAULT ''")
     _ensure_column(conn, "entries", "handle", "TEXT DEFAULT ''")
+    for column in ("id", "generated_by", "generated_at", "verified_tier", "verified_at"):
+        _ensure_column(conn, "entries", column, "TEXT DEFAULT ''")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS moves (
+            id          TEXT,   -- entry id seen at a new relpath
+            old_relpath TEXT,   -- where the index last had it (file gone)
+            new_relpath TEXT,
+            at          INTEGER -- unix time the move was detected
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS edges (
@@ -459,7 +486,8 @@ def _write_metadata(conn: sqlite3.Connection, entry: Entry) -> None:
     """Refresh the derived (non-embedding) columns and edges of one entry."""
     conn.execute(
         "UPDATE entries SET title = ?, tags = ?, status = ?, created = ?, type = ?, "
-        "see = ?, description = ?, handle = ? WHERE relpath = ?",
+        "see = ?, description = ?, handle = ?, id = ?, generated_by = ?, generated_at = ?, "
+        "verified_tier = ?, verified_at = ? WHERE relpath = ?",
         (
             entry.title,
             json.dumps(entry.tags, ensure_ascii=False),
@@ -469,6 +497,11 @@ def _write_metadata(conn: sqlite3.Connection, entry: Entry) -> None:
             json.dumps(entry.see, ensure_ascii=False),
             entry.description,
             entry.handle,
+            entry.id,
+            entry.generated_by,
+            entry.generated_at,
+            entry.verified_tier,
+            entry.verified_at,
             entry.relpath,
         ),
     )
@@ -533,7 +566,8 @@ def _upsert_entry(conn: sqlite3.Connection, entry: Entry) -> int:
     _delete_entry_rows(conn, entry.relpath)
     conn.execute(
         "INSERT INTO entries (relpath, title, tags, status, created, type, see, sha256, "
-        "description, handle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "description, handle, id, generated_by, generated_at, verified_tier, verified_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             entry.relpath,
             entry.title,
@@ -545,6 +579,11 @@ def _upsert_entry(conn: sqlite3.Connection, entry: Entry) -> int:
             entry.sha256,
             entry.description,
             entry.handle,
+            entry.id,
+            entry.generated_by,
+            entry.generated_at,
+            entry.verified_tier,
+            entry.verified_at,
         ),
     )
     _write_edges(conn, entry)
@@ -565,6 +604,38 @@ def _upsert_entry(conn: sqlite3.Connection, entry: Entry) -> int:
     return len(texts)
 
 
+def _apply_moves(conn: sqlite3.Connection, root: Path, entries: dict[str, Entry],
+                 stored: dict[str, str]) -> int:
+    """Re-key entries whose `id` the index already holds under a relpath
+    that no longer exists on disk: a move (manual `mv`, a rename done
+    outside `kb_graph.py rename`). Rows keep their embeddings — the content
+    is compared by sha256 afterwards as usual — and the move is recorded in
+    `moves` so `kb_graph.py relink` can repair links that still point at
+    the old path. Returns the number of moves applied."""
+    known = {eid: rp for rp, eid in conn.execute(
+        "SELECT relpath, id FROM entries WHERE id != ''")}
+    n = 0
+    for relpath, entry in entries.items():
+        if relpath in stored or not entry.id:
+            continue
+        old = known.get(entry.id)
+        if not old or old == relpath or (root / old).exists():
+            continue  # unknown, or the old file still exists (a copy, not a move)
+        for sql in ("UPDATE entries SET relpath = ? WHERE relpath = ?",
+                    "UPDATE chunks SET relpath = ? WHERE relpath = ?",
+                    "UPDATE edges SET src = ? WHERE src = ?",
+                    "UPDATE edges SET target = ? WHERE target = ?"):
+            conn.execute(sql, (relpath, old))
+        conn.execute(
+            "INSERT INTO moves (id, old_relpath, new_relpath, at) VALUES (?, ?, ?, ?)",
+            (entry.id, old, relpath, int(time.time())),
+        )
+        stored[relpath] = stored.pop(old)
+        known[entry.id] = relpath
+        n += 1
+    return n
+
+
 def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -> dict:
     """Incrementally refresh the index for `root`.
 
@@ -583,6 +654,7 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
     if only is not None:
         entries = {k: v for k, v in entries.items() if k in only}
 
+    moved = _apply_moves(conn, root, entries, stored)
     added = changed = removed = unchanged = 0
     embedded_chunks = 0
 
@@ -616,6 +688,7 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
         "added": added,
         "changed": changed,
         "removed": removed,
+        "moved": moved,
         "unchanged": unchanged,
         "embedded_chunks": embedded_chunks,
         "upgraded": upgraded,
@@ -623,6 +696,7 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
     }
     if verbose:
         extra = f", {upgraded} metadata rows upgraded" if upgraded else ""
+        extra += f", {moved} moved (rows re-keyed, not re-embedded)" if moved else ""
         print(
             f"index: +{added} ~{changed} -{removed} ={unchanged} "
             f"({embedded_chunks} chunks embedded{extra}) -> {db_path}"

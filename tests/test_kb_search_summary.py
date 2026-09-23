@@ -50,6 +50,9 @@ def make_kb(base):
             "status: active\n"
             'tags: "#x"\n'
             "description: Open when choosing between alpha and beta.\n"
+            "id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n"
+            "generated:\n  by: claude-code\n  at: 2026-09-01T10:00:00+09:00\n"
+            "verified:\n  - by: human:u\n    at: 2026-09-02T10:00:00+09:00\n"
             "---\n\n# Alpha entry\n\nLead paragraph of alpha.\n\n## 関連\n\n"
             f"- see: [Beta](../../{B}) — why beta matters\n"
             f"- amends: [Gamma]({C})\n"
@@ -58,6 +61,8 @@ def make_kb(base):
         ),
         B: (
             "---\ntitle: Beta entry\nstatus: superseded\n"
+            "generated:\n  by: human:u\n  at: 2026-09-02T10:00:00+09:00\n"
+            "verified:\n  - by: process:gate\n    at: 2026-09-01T10:00:00+09:00\n"  # expired
             f"superseded_by: {A}\n---\n\n# Beta entry\n\n"
             "- not a lead (list)\n\nThe real lead of beta.\n\n"
             f"- extends: [Alpha]({A}) — beta extends alpha\n"
@@ -123,6 +128,35 @@ def test_handles():
     check("duplicate basename falls back to relpath",
           [e.handle for e in twins.values()] == ["a/README.md", "b/README.md", "other.md"],
           [e.handle for e in twins.values()])
+
+
+def test_trust_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = make_kb(tmp)
+        a = kbi.parse_entry(root / A, root)
+        check("id parsed", a.id == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        check("generated parsed", (a.generated_by, a.generated_at) == ("claude-code", "2026-09-01T10:00:00+09:00"))
+        check("human tier", (a.verified_tier, a.verified_at) == ("human", "2026-09-02T10:00:00+09:00"))
+        b = kbi.parse_entry(root / B, root)
+        check("expired verification → unverified", b.verified_tier == "" and b.generated_by == "human:u")
+        c = kbi.parse_entry(root / C, root)
+        check("no fields → empty", (c.id, c.generated_by, c.verified_tier) == ("", "", ""))
+    out = ks.format_summary([{"title": "Alpha entry", "relpath": A, "status": "active",
+                              "description": "d", "verified_tier": "human"},
+                             {"title": "Beta entry", "relpath": B, "status": "superseded",
+                              "description": "d", "verified_tier": ""}])
+    lines = out.splitlines()
+    check("tier marker after title", lines[0] == f"* [Alpha entry]({A}) [human] - d", lines[0])
+    check("no marker when unverified", lines[1] == f"* [Beta entry]({B}) (superseded) - d", lines[1])
+    ranked = ks.format_ranked([{"score": 1, "title": "T", "relpath": A, "status": "active",
+                                "tags": [], "snippet": "", "verified_tier": "machine"}])
+    check("ranked marker", ranked.splitlines()[0] == "1. [1] T [machine]", ranked)
+    kw = dict(status=None, tags=[], etype=None, created_from=None, created_to=None)
+    check("filter human", ks.apply_filters({"verified_tier": "human"}, verified_min="human", **kw)
+          and not ks.apply_filters({"verified_tier": "machine"}, verified_min="human", **kw))
+    check("filter machine accepts human", ks.apply_filters({"verified_tier": "human"}, verified_min="machine", **kw)
+          and not ks.apply_filters({"verified_tier": ""}, verified_min="machine", **kw))
+    check("no filter by default", ks.apply_filters({"verified_tier": ""}, **kw))
 
 
 def test_entry_id_and_format():
@@ -209,9 +243,20 @@ def test_schema_upgrade():
               handles[A] == "20260901-100000" and handles[D] == "20260903-100000-u-delta.md"
               and handles[E] == "20260903-100000-u-epsilon.md", handles)
 
+        # Schema-3 columns backfilled by the same upgrade.
+        conn = kbi.connect(db)
+        row = conn.execute("SELECT id, generated_by, generated_at, verified_tier, verified_at "
+                           "FROM entries WHERE relpath = ?", (A,)).fetchone()
+        conn.close()
+        check("trust columns backfilled", row == ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "claude-code",
+                                               "2026-09-01T10:00:00+09:00", "human", "2026-09-02T10:00:00+09:00"), row)
+
         # Edge lookups used by the summary mode.
         meta = ks._entry_meta(root)
         check("meta carries the handle", meta[E]["handle"] == "20260903-100000-u-epsilon.md")
+        check("meta carries the trust fields", meta[A]["verified_tier"] == "human"
+              and meta[A]["generated"] == {"by": "claude-code", "at": "2026-09-01T10:00:00+09:00"}
+              and meta[C]["generated"] is None, meta[A])
         twin = ks.entry_edges(root, [D], meta, max_out=-1, max_in=-1)[D]["edges"][0]
         check("edge carries the neighbour's handle", twin["handle"] == "20260903-100000-u-epsilon.md", twin)
         out = ks.format_summary([{"title": "Delta entry", "relpath": D, "status": "active",
@@ -230,10 +275,32 @@ def test_schema_upgrade():
         check("one-hop follows amends too", fused.get(C) == 0.5 and fused.get(B) == 0.5, fused)
         check("one-hop ignores unresolved target", "2026/09/nope.md" not in fused)
 
+        # A moved by hand: same id at a new relpath, old file gone. The index
+        # re-keys the rows (no re-embedding) and records the move.
+        moved = "2026/09/20260901-100000-u-alpha-renamed.md"
+        os.rename(root / A, root / moved)
+        conn = kbi.connect(db)
+        conn.execute("INSERT INTO chunks (relpath, chunk_id, text) VALUES (?, 'c0', 'x')", (A,))
+        conn.commit()
+        entries = kbi.scan_entries(root)
+        stored = kbi._stored_hashes(conn)
+        n = kbi._apply_moves(conn, root, entries, stored)
+        conn.commit()
+        check("move detected once", n == 1 and kbi._apply_moves(conn, root, entries, stored) == 0, n)
+        rows = conn.execute("SELECT relpath FROM entries WHERE id = ?", ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",)).fetchall()
+        check("entry row re-keyed", rows == [(moved,)], rows)
+        check("chunk row re-keyed", conn.execute("SELECT relpath FROM chunks").fetchall() == [(moved,)])
+        check("edges re-keyed", conn.execute("SELECT count(*) FROM edges WHERE src = ? OR target = ?", (A, A)).fetchone()[0] == 0
+              and conn.execute("SELECT count(*) FROM edges WHERE target = ?", (moved,)).fetchone()[0] == 1)
+        check("move recorded", conn.execute("SELECT old_relpath, new_relpath FROM moves").fetchall() == [(A, moved)])
+        check("stored map follows", moved in stored and A not in stored)
+        conn.close()
+
 
 if __name__ == "__main__":
     test_parse_entry()
     test_handles()
+    test_trust_fields()
     test_entry_id_and_format()
     test_schema_upgrade()
     if FAILURES:

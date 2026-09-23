@@ -28,7 +28,7 @@ Run from Bash (main agent):
 ```bash
 uv run "{plugin_root}/scripts/kb_search.py" "{KB_ROOT}" "<query>" --summary --top 10 \
   [--status active] [--tag '#sometag'] [--type knowledge] \
-  [--created-from YYYY-MM-DD] [--created-to YYYY-MM-DD] [--json]
+  [--created-from YYYY-MM-DD] [--created-to YYYY-MM-DD] [--verified machine|human] [--json]
 ```
 
 Start with `--summary`: per hit it prints the title, the `description` (when
@@ -39,7 +39,10 @@ appear as `- see 20260727-025736 — <label>`: the handle is the filename prefix
 or the full filename when two entries share a prefix (recorded in the same
 second). Either way it is unique: `kb_graph.py neighborhood <handle>`, or glob
 `*/<handle>*` to Read it. `(lead)` marks a fallback (no description yet); `(superseded)`
-means go to the current authority instead. Drop `--summary` for keyword
+means go to the current authority instead. `[human]` / `[machine]` after a title
+is the trust tier — who last verified the content; no marker means unverified,
+which is where most entries stand, not a defect. `--verified human` keeps only
+human-reviewed hits; the tier never changes ranking. Drop `--summary` for keyword
 snippets; add `--linked-from 1` to see which hub links to a leaf; `--edges -1`
 on a hub lists every leaf.
 

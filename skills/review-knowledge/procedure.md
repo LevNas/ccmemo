@@ -132,6 +132,8 @@ Interactively fix issues found in the health check:
    - **Missing overviews**: Generate an overview entry template for the user to review — do NOT auto-create, ask for confirmation first
    - **Unregistered tags**: Auto-add missing tags to the registry in `.claude/knowledge/CLAUDE.md` under the appropriate section
    - **Unused tags**: Report for manual review (do not auto-delete)
+   - **Confirmed-current entries**: when a reviewed entry's content is confirmed to still hold, record the check — `kb_graph.py verify <entry> --by human:<handle>` when the user confirmed it, `--by claude-code/<model-id>` when an independent agent session did (never the session that wrote the entry). Start with the entries lint lists under `verification-expired` / `stale-after-passed`. Never record lint passing, a link fix or a banner edit as verification; never edit `verified:` by hand
+   - **Renamed or moved entries**: `kb_graph.py relink` repairs links the index recorded as moved; for a slug that misleads, `kb_graph.py rename <entry> <new-slug>` (prefix and directory stay, links follow)
 
    **Writing links** (orphans, missing connections, unidirectional links, broken see links): when a shell tool is available, add each link with `kb_graph.py link-add <src> <dst> --reason "<relationship>"` (`--bidirectional` for a pair) — see record-knowledge step 7. If it exits non-zero or the CLI cannot be run at all (no shell tool), write the line by hand after the entry's last link line, or under its `## 関連` heading:
 

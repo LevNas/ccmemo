@@ -78,10 +78,11 @@ def main() -> None:
     advisory = [f for f in findings if f.get("severity", "error") == "advisory"]
     name = os.path.basename(file_path)
     if not enforced:
+        checks = ", ".join(sorted({f.get("check", "") for f in advisory}))
         reason = (
-            f"[ccmemo] kb_graph lint ({name}): {len(advisory)} advisory — "
-            "description / link-label checks are not enforced for this knowledge base yet "
-            "(declare `schema_version: 2` in .claude/knowledge/CLAUDE.md once migrated; "
+            f"[ccmemo] kb_graph lint ({name}): {len(advisory)} advisory ({checks}) — "
+            "not enforced at this knowledge base's schema_version "
+            "(raise `schema_version:` in .claude/knowledge/CLAUDE.md once migrated; "
             "see docs/upgrading.md)."
         )
         json.dump({"decision": "warn", "reason": reason}, sys.stdout, ensure_ascii=False)

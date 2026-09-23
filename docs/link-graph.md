@@ -40,6 +40,10 @@ python3 scripts/kb_graph.py lineage <entry>          # supersede chain → curre
 python3 scripts/kb_graph.py link-add <src> <dst> --reason "why"  # deterministic writer
 python3 scripts/kb_graph.py supersede <old> <new> --reason "what changed"  # change flow
 python3 scripts/kb_graph.py lint                     # exit 1 on findings
+python3 scripts/kb_graph.py migrate --to 3           # add id / generated where missing (idempotent)
+python3 scripts/kb_graph.py verify <entry> --by human:alice   # record an independent check
+python3 scripts/kb_graph.py rename <entry> <new-slug>         # slug only; links follow
+python3 scripts/kb_graph.py relink                   # repair links to paths the index saw move
 python3 scripts/kb_graph.py index-md --out index.md  # OKF-style table of contents
 python3 scripts/kb_graph.py union-recover <file>     # lossless union of diverged append-only copies
 ```
@@ -110,6 +114,50 @@ printed, so the gap stays visible. Stdout when `--out` is omitted. The same
 shape is what `kb_search.py --summary` prints per hit (see
 [hybrid-search.md](hybrid-search.md)).
 
+### `migrate --to 3 [--by ACTOR] [--tz +HH:MM] [--dry-run]`
+
+Brings every entry up to schema 3 and changes nothing else: inserts
+`id: <uuid4>` (after `title:`) where missing and `generated: {by, at}` (after
+`created:`) where missing — `by` is `--by` (default `claude-code`), `at` the
+filename's date-time in the corpus time zone (`--tz`, default: this
+machine's). Idempotent: a second run reports 0 changes. `verified` is never
+backfilled — nobody has independently checked the old entries, so they start
+unverified — and `confidence:` is left in place (retired, ignored). Entries
+without frontmatter are skipped and named. Steps around it:
+[upgrading.md](upgrading.md#127-entry-ids-and-verification).
+
+### `verify <entry> --by ACTOR [--at ISO-8601] [--dry-run]`
+
+Appends one `{by, at}` event to the entry's `verified:` list (created after
+`generated:` when absent; `--at` defaults to now with the local offset).
+`ACTOR` is `human:<handle>`, `claude-code[/<model-id>]` or `process:<name>`;
+anything else exits non-zero without writing. The same event twice is a
+no-op. The command prints the resulting tier; an event older than
+`generated.at` is recorded but noted as expired. Use it when a person, an
+independent agent session or a gate process actually checked the content —
+not for lint passing, link fixes or banner edits.
+
+### `rename <entry> <new-slug> [--dry-run]`
+
+Changes the slug only: the `YYYYMMDD-HHMMSS` prefix (the creation time, a
+fact), the author segment and the `YYYY/MM/` directory stay. Every link and
+`superseded_by:` in the corpus that resolves to the entry is rewritten to the
+new path, keeping each link's style (root-relative stays root-relative,
+directory-relative stays directory-relative). `id` carries the identity
+across. Refuses a slug that is not kebab-case, a target that exists, or a
+file not named `<date>-<time>-<author>-<slug>.md`.
+
+### `relink [--dry-run]`
+
+Repairs links to paths the search index recorded as **moved**: when a
+re-index (`kb_index.py`, or the lazy refresh before a search) finds a known
+`id` at a new relpath while the old file is gone — a manual `mv`, a rename
+done without `rename` — it re-keys the rows (no re-embedding) and writes the
+pair to a `moves` table. `relink` reads that table and rewrites every link
+and `superseded_by:` still pointing at an old path, in recorded order, so
+chains resolve hop by hop. Needs an index; prints `nothing to relink` when
+there is nothing left.
+
 ### `lint [files...]`
 
 Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
@@ -132,16 +180,25 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 | `description-length` | description under 80 chars (cannot name a situation) or over 320 (reads as a summary) |
 | `unlabeled-link` | a `see:`/`ref:`/`amends:`/`extends:` line with nothing after the link — the "— why to follow it" label is what lets a reader decide without opening the target |
 | `amends-unreciprocated` / `extends-unreciprocated` | the target of a correction / elaboration does not link back to it (any link kind) and is not superseded by it — readers of the target would never learn of the correction |
+| `missing-id` / `duplicate-id` | no `id:` (uuid4), or the same `id` in two entries of this corpus (the same `id` in *another* corpus is a mirror, not a finding) |
+| `missing-generated` | no `generated:` — or not a `{by, at}` mapping with an ISO 8601 `at` |
+| `invalid-actor` | `generated.by` or a `verified[].by` is not `human:<handle>`, `claude-code[/<model-id>]` or `process:<name>` |
+| `verification-expired` | the latest `verified.at` is older than `generated.at`: the body was rewritten since it was checked (informational) |
+| `stale-after-passed` | `stale_after:` is behind today (informational) |
+| `duplicate-title` | two entries share a title — hard to tell apart in search results (informational) |
 
-**Schema-gated checks.** The last four rows are enforced only when the
-knowledge base declares `schema_version: 2` in the frontmatter of
-`<root>/../CLAUDE.md` (the scaffolded `CLAUDE.md` does). On a corpus without
-that declaration they are still listed, under an *advisory* heading, but do
-not affect the exit code — so updating the plugin never turns a pre-commit
-lint red before the corpus is migrated. `--schema N` lints as if the corpus
-declared N (`--json` output carries `severity`: `error` | `advisory`);
-`CCMEMO_SCHEMA_VERSION` does the same for a shell. Migration steps:
-[upgrading.md](upgrading.md).
+**Schema-gated checks.** Checks are enforced only when the knowledge base
+declares the schema that introduced them in the frontmatter of
+`<root>/../CLAUDE.md` (the scaffolded `CLAUDE.md` declares the latest):
+`missing-description` … `extends-unreciprocated` from `schema_version: 2`,
+`missing-id` … `invalid-actor` from `schema_version: 3`. On a corpus that
+declares less they are still listed, under an *advisory* heading, but do not
+affect the exit code — so updating the plugin never turns a pre-commit lint
+red before the corpus is migrated. The three *informational* rows are
+advisory at every schema: they describe the state of the knowledge, not a
+broken convention. `--schema N` lints as if the corpus declared N (`--json`
+output carries `severity`: `error` | `advisory`); `CCMEMO_SCHEMA_VERSION`
+does the same for a shell. Migration steps: [upgrading.md](upgrading.md).
 
 The post-write hook `hooks/postwrite_kb_lint.py` runs `lint <file>` on every
 knowledge entry a Write/Edit touches and returns the findings as a warning in
@@ -299,7 +356,10 @@ by `lint` but are not part of the entry graph.
   judgment work instead of re-deriving link facts by hand. The supersede-chain
   part of the health check is covered by the four deterministic lint checks;
   typing judgment (which prose markers deserve `amends:`/`extends:`) stays
-  with the reviewer.
+  with the reviewer. In `fix` mode a confirmed-current entry is recorded with
+  `verify` (human actor when the user confirmed, agent actor when an
+  independent session did), starting from the `verification-expired` /
+  `stale-after-passed` advisories; moved entries are repaired with `relink`.
 
 ## Related
 

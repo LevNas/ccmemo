@@ -14,6 +14,10 @@ Subcommands:
   supersede <old> <new>  mark old as replaced by new: frontmatter pair,
                          body-top banner, amends back-link — in one atomic step
   lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings)
+  migrate --to 3         add the schema-3 fields (id, generated) where missing
+  verify <entry> --by A  append a verified event (independent check of the content)
+  rename <entry> <slug>  change the slug only; rewrite every link to the entry
+  relink                 repair links to paths the index recorded as moved
   union-recover <file>   lossless union of two append-only copies of one file
                          that diverged across checkouts (captures, hub-entry
                          see: blocks) — verified, refuses anything else
@@ -79,11 +83,13 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks"))
 from lib import frontmatter as _frontmatter  # noqa: E402
 from lib.edges import LINK_RE, LOOSE_LINK_RE  # noqa: E402,F401  (shared with kb_index)
 from lib import edges as _edges  # noqa: E402
+from lib import trust as _trust  # noqa: E402
 import tempfile
 from collections import deque
 
@@ -109,11 +115,15 @@ DESCRIPTION_MAX_CHARS = 320
 # (`schema_version: 2`); checks introduced by a later schema are still
 # reported on an older corpus, but as *advisory* findings that do not affect
 # the exit code, until the declaration is raised (see docs/upgrading.md).
-SCHEMA_VERSION_LATEST = 2
+SCHEMA_VERSION_LATEST = 3
 SCHEMA_CHECKS = {
     2: {"missing-description", "description-length", "unlabeled-link",
         "amends-unreciprocated", "extends-unreciprocated"},
+    3: {"missing-id", "duplicate-id", "missing-generated", "invalid-actor"},
 }
+# Informational at every schema: they describe the state of the knowledge,
+# not a broken convention, so they never fail a pre-commit lint.
+ALWAYS_ADVISORY = {"verification-expired", "stale-after-passed", "duplicate-title"}
 
 
 def kb_schema_version(root, override=None):
@@ -140,6 +150,8 @@ def kb_schema_version(root, override=None):
 
 def check_severity(check, schema):
     """'error' when the check is enforced at `schema`, else 'advisory'."""
+    if check in ALWAYS_ADVISORY:
+        return "advisory"
     for version, checks in SCHEMA_CHECKS.items():
         if check in checks and schema < version:
             return "advisory"
@@ -176,13 +188,45 @@ def load_graph(root):
                 text = f.read()
             meta = parse_frontmatter(text)
             sup = meta.get("superseded_by", "")
+            gen = _trust.generated_of(meta)
+            tier, tier_at = _trust.verified_tier(meta)
             nodes[nid] = {
                 "title": meta.get("title", ""),
                 "tags": set(meta.get("tags", [])),
                 "status": meta.get("status", ""),
                 "description": meta.get("description", ""),
                 "superseded_by": sup.split("#")[0].strip(),
+                "id": str(meta.get("id", "") or "").strip(),
+                "generated": gen,
+                "verified_tier": tier,
+                "verified_at": tier_at,
             }
+            # Schema 3: identity and trust family (docs/upgrading.md, 1.27).
+            if not nodes[nid]["id"]:
+                problems.append((nid, "missing-id", "no id: (uuid4) — run `migrate --to 3`"))
+            if "generated" not in meta:
+                problems.append((nid, "missing-generated",
+                                 "no generated: {by, at} — run `migrate --to 3`"))
+            elif gen is None or _trust.parse_dt(gen["at"]) is None:
+                problems.append((nid, "missing-generated",
+                                 "generated: must be a mapping with by: <actor> and at: <ISO 8601>"))
+            elif not _trust.valid_actor(gen["by"]):
+                problems.append((nid, "invalid-actor",
+                                 f"generated.by {gen['by']!r}: expected human:<handle>, "
+                                 "claude-code[/<model-id>] or process:<name>"))
+            for i, ev in enumerate(_trust.verified_events(meta)):
+                if not _trust.valid_actor(ev["by"]):
+                    problems.append((nid, "invalid-actor",
+                                     f"verified[{i}].by {ev['by']!r}: expected human:<handle>, "
+                                     "claude-code[/<model-id>] or process:<name>"))
+            if _trust.verification_expired(meta):
+                problems.append((nid, "verification-expired",
+                                 "latest verified.at is older than generated.at — the body was "
+                                 "rewritten since; verify again or leave it unverified"))
+            if _trust.stale_after_passed(meta):
+                problems.append((nid, "stale-after-passed",
+                                 f"stale_after {meta.get('stale_after')} has passed — re-check, "
+                                 "then move the date or deprecate"))
             if not meta.get("title"):
                 problems.append((nid, "missing-title", "no frontmatter title"))
             desc = " ".join(meta.get("description", "").split())
@@ -257,6 +301,24 @@ def load_graph(root):
                     edges.append((nid, dst, kind, resolution))
                 # links leaving the entries tree (rules, docs...) are checked
                 # for existence above but are not part of the entry graph
+    by_id, by_title = {}, {}
+    for nid, info in nodes.items():
+        if info["id"]:
+            by_id.setdefault(info["id"], []).append(nid)
+        key = " ".join(info["title"].split()).casefold()
+        if key:
+            by_title.setdefault(key, []).append(nid)
+    for eid, members in by_id.items():
+        if len(members) > 1:
+            for nid in members:
+                others = ", ".join(m for m in sorted(members) if m != nid)
+                problems.append((nid, "duplicate-id", f"id {eid} also in {others}"))
+    for _key, members in by_title.items():
+        if len(members) > 1:
+            for nid in members:
+                others = ", ".join(m for m in sorted(members) if m != nid)
+                problems.append((nid, "duplicate-title",
+                                 f"same title as {others} — hard to tell apart in search results"))
     seen = set()
     deduped = []
     for e in edges:
@@ -544,7 +606,10 @@ def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json, schema=
         findings = [f for f in findings if os.path.basename(f[0]) in keys]
     findings.sort()
     enforced = [f for f in findings if check_severity(f[1], schema) == "error"]
-    advisory = [f for f in findings if check_severity(f[1], schema) == "advisory"]
+    gated = [f for f in findings if check_severity(f[1], schema) == "advisory"
+             and f[1] not in ALWAYS_ADVISORY]
+    notices = [f for f in findings if f[1] in ALWAYS_ADVISORY]
+    advisory = gated + notices
     if as_json:
         print(json.dumps([{"id": i, "check": c, "detail": d,
                            "severity": check_severity(c, schema)}
@@ -553,13 +618,17 @@ def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json, schema=
     else:
         for nid, check, detail in enforced:
             print(f"{check:>14}  {nid}\n                {detail}")
-        if advisory:
+        if gated:
             where = os.path.join(root or ".", "..", "CLAUDE.md")
             print(f"\nadvisory — schema_version {schema} declared; these checks are "
-                  f"enforced from schema_version {SCHEMA_VERSION_LATEST}\n"
-                  f"(declare `schema_version: {SCHEMA_VERSION_LATEST}` in the frontmatter of "
+                  f"enforced at a later schema_version (latest: {SCHEMA_VERSION_LATEST})\n"
+                  f"(raise `schema_version:` in the frontmatter of "
                   f"{os.path.normpath(where)} once the corpus is migrated — see docs/upgrading.md):")
-            for nid, check, detail in advisory:
+            for nid, check, detail in gated:
+                print(f"{check:>14}  {nid}\n                {detail}")
+        if notices:
+            print("\nadvisory — informational at every schema_version (never fails the lint):")
+            for nid, check, detail in notices:
                 print(f"{check:>14}  {nid}\n                {detail}")
         tail = f"\n{len(enforced)} finding(s)"
         if advisory:
@@ -944,6 +1013,282 @@ def cmd_union_recover(args):
           "sides shows up as duplicate-link")
 
 
+# --------------------------------------------------------------------------- #
+# Schema 3: id, generated / verified, rename / relink  (docs/upgrading.md, 1.27)
+# --------------------------------------------------------------------------- #
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$")
+_DATED_NAME_RE = re.compile(r"^(\d{8}-\d{6}-[^-]+)-(.+)\.md$")
+_MD_TARGET_RE = re.compile(r"(\]\()([^)\s]+)(\))")
+_SUPERSEDED_BY_LINE_RE = re.compile(r"^(superseded_by:\s*)(\S+)(.*)$", re.MULTILINE)
+
+
+def _read_text(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _corpus_tz(spec):
+    """tzinfo from ``+09:00`` / ``-05:30`` / ``Z``; default: this machine's
+    current offset (the corpus is assumed to have been written here)."""
+    if not spec:
+        return datetime.datetime.now().astimezone().tzinfo
+    s = spec.strip()
+    if s.upper() == "Z":
+        return datetime.timezone.utc
+    m = re.match(r"^([+-])(\d{2}):?(\d{2})$", s)
+    if not m:
+        sys.exit(f"error: --tz must look like +09:00 (got {spec!r})")
+    sign = 1 if m.group(1) == "+" else -1
+    delta = datetime.timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
+    return datetime.timezone(sign * delta)
+
+
+def _filename_timestamp(nid, tz):
+    """``generated.at`` for migrate: the filename's date-time in the corpus TZ."""
+    m = re.match(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-", os.path.basename(nid))
+    if not m:
+        return None
+    try:
+        return datetime.datetime(*map(int, m.groups()), tzinfo=tz).isoformat()
+    except ValueError:
+        return None
+
+
+def cmd_migrate(root, nodes, args):
+    """Bring every entry up to schema `--to` without touching anything else.
+
+    Schema 3 (idempotent): insert ``id: <uuid4>`` where missing and
+    ``generated: {by, at}`` where missing — ``at`` is the filename's
+    date-time in the corpus time zone (``--tz``), else ``created``, else
+    now. ``verified`` is never backfilled: nobody has independently checked
+    the existing entries, so they honestly start unverified. ``confidence``
+    is left in place (retired, still parsed, never used).
+    """
+    if args.to != 3:
+        sys.exit(f"error: migrate knows schema 3 only (got --to {args.to})")
+    if not _trust.valid_actor(args.by):
+        sys.exit(f"error: --by must be human:<handle>, claude-code[/<model>] or "
+                 f"process:<name> (got {args.by!r})")
+    root_abs = os.path.abspath(root)
+    tz = _corpus_tz(args.tz)
+    n_id = n_gen = n_same = n_skip = n_changed = 0
+    for nid in sorted(nodes):
+        path = os.path.join(root_abs, nid)
+        text = _read_text(path)
+        raw, _body = _frontmatter.parse_raw(text)
+        if not _frontmatter.has_frontmatter(text):
+            print(f"skip (no frontmatter): {nid}")
+            n_skip += 1
+            continue
+        new_text = text
+        added = []
+        if not str(raw.get("id", "")).strip():
+            new_text = _trust.set_key(new_text, "id", [f"id: {uuid.uuid4()}"], after="title")
+            added.append("id")
+            n_id += 1
+        if "generated" not in raw:
+            at = _filename_timestamp(nid, tz)
+            if at is None:
+                created = str(raw.get("created", "")).strip()
+                d = _trust.parse_dt(created)
+                at = (d.replace(tzinfo=tz).isoformat() if d is not None
+                      else datetime.datetime.now(tz).replace(microsecond=0).isoformat())
+            anchor = "created" if "created" in raw else "id"
+            new_text = _trust.set_key(
+                new_text, "generated", ["generated:"] + _trust.event_lines(args.by, at, item=False),
+                after=anchor)
+            added.append("generated")
+            n_gen += 1
+        if new_text == text:
+            n_same += 1
+            continue
+        n_changed += 1
+        if args.dry_run:
+            print(f"dry-run: would add {', '.join(added)} to {nid}")
+        else:
+            _write_atomic(path, new_text)
+            print(f"migrated ({', '.join(added)}): {nid}")
+    verb = "would change" if args.dry_run else "changed"
+    print(f"\n{verb} {n_changed} entr(y/ies): "
+          f"id added to {n_id}, generated added to {n_gen}; {n_same} already at schema 3"
+          + (f", {n_skip} skipped" if n_skip else ""))
+    if not args.dry_run and (n_id or n_gen):
+        print("next: declare `schema_version: 3` in the frontmatter of "
+              f"{os.path.normpath(os.path.join(root, '..', 'CLAUDE.md'))}, then run `lint`")
+
+
+def cmd_verify(root, nodes, args):
+    """Append one ``verified`` event — the deterministic way to record that
+    someone (a person, an agent session, a gate process) independently
+    checked the entry's content. Lint passing is *not* verification."""
+    nid = resolve_entry(nodes, args.entry)
+    by = args.by.strip()
+    if not _trust.valid_actor(by):
+        sys.exit(f"error: --by must be human:<handle>, claude-code[/<model>] or "
+                 f"process:<name> (got {args.by!r})")
+    at = (args.at or _trust.now_iso()).strip()
+    if _trust.parse_dt(at) is None:
+        sys.exit(f"error: --at must be ISO 8601 (got {args.at!r})")
+    path = os.path.join(os.path.abspath(root), nid)
+    text = _read_text(path)
+    if not _frontmatter.has_frontmatter(text):
+        sys.exit(f"error: no frontmatter: {nid}")
+    meta = parse_frontmatter(text)
+    for ev in _trust.verified_events(meta):
+        if ev["by"] == by and ev["at"] == at:
+            print(f"already recorded: {nid} verified by {by} at {at}")
+            return
+    gen = _trust.generated_of(meta)
+    if gen is None:
+        print(f"note: {nid} has no generated: — run `migrate --to 3` so expiry can be derived",
+              file=sys.stderr)
+    elif (_trust.parse_dt(at) or datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)) \
+            < (_trust.parse_dt(gen["at"]) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)):
+        print(f"note: {at} is older than generated.at {gen['at']} — this event counts as expired",
+              file=sys.stderr)
+    new_text = _trust.append_list_item(
+        text, "verified", _trust.event_lines(by, at, item=True), after="generated")
+    if args.dry_run:
+        print(f"dry-run: would record in {nid}:\n  - by: {by}\n    at: {at}")
+        return
+    _write_atomic(path, new_text)
+    tier, _ = _trust.verified_tier(parse_frontmatter(new_text))
+    print(f"verified: {nid} by {by} at {at} (tier: {tier or 'unverified'})")
+
+
+def _rewrite_targets(text, dirpath, root_abs, old_abs, new_abs):
+    """Point every Markdown link target and ``superseded_by:`` value that
+    resolves to ``old_abs`` at ``new_abs``, keeping each link's style
+    (entries-root-relative stays root-relative, directory-relative stays
+    directory-relative). Returns the new text (unchanged when nothing
+    pointed at old_abs)."""
+    def fix_target(t):
+        core, sep, frag = t.partition("#")
+        if not core or core.startswith(("http://", "https://")):
+            return t
+        if os.path.normpath(os.path.join(root_abs, core)) == old_abs:
+            return os.path.relpath(new_abs, root_abs) + sep + frag
+        if os.path.normpath(os.path.join(dirpath, core)) == old_abs:
+            return os.path.relpath(new_abs, dirpath) + sep + frag
+        return t
+
+    out = _MD_TARGET_RE.sub(lambda m: m.group(1) + fix_target(m.group(2)) + m.group(3), text)
+    b = _trust.fm_bounds(out)
+    if b:
+        fm = out[b[0]:b[1]]
+        fm2 = _SUPERSEDED_BY_LINE_RE.sub(
+            lambda m: m.group(1) + fix_target(m.group(2)) + m.group(3), fm)
+        out = out[:b[0]] + fm2 + out[b[1]:]
+    return out
+
+
+def _relink_plans(root_abs, nodes, old_rel, new_rel, skip=()):
+    old_abs = os.path.normpath(os.path.join(root_abs, old_rel))
+    new_abs = os.path.normpath(os.path.join(root_abs, new_rel))
+    plans = []
+    for nid in sorted(nodes):
+        if nid in skip:
+            continue
+        path = os.path.join(root_abs, nid)
+        text = _read_text(path)
+        new_text = _rewrite_targets(text, os.path.dirname(path), root_abs, old_abs, new_abs)
+        if new_text != text:
+            plans.append((nid, path, new_text))
+    return plans
+
+
+def cmd_rename(root, nodes, args):
+    """Change an entry's slug only. The date-time prefix (creation time — a
+    fact), the author segment and the ``YYYY/MM/`` directory stay; every
+    link and ``superseded_by:`` in the corpus is rewritten to the new path.
+    ``id`` keeps the entry's identity across the rename."""
+    nid = resolve_entry(nodes, args.entry)
+    root_abs = os.path.abspath(root)
+    base = os.path.basename(nid)
+    m = _DATED_NAME_RE.match(base)
+    if not m:
+        sys.exit(f"error: {nid} is not named <date>-<time>-<author>-<slug>.md; rename by hand")
+    prefix = m.group(1)
+    # The author segment may itself contain hyphens (`lev-nas`): when the
+    # frontmatter names the author, trust it over the first-hyphen split.
+    author = _trust.human_actor(parse_frontmatter(_read_text(os.path.join(root_abs, nid))).get("author"))
+    handle = author[len("human:"):] if author else ""
+    if handle and base.startswith(f"{base[:15]}-{handle}-"):
+        prefix = f"{base[:15]}-{handle}"
+    slug = args.new_slug.strip()
+    if not _SLUG_RE.match(slug):
+        sys.exit(f"error: slug must be kebab-case [a-z0-9-] (got {slug!r})")
+    new_base = f"{prefix}-{slug}.md"
+    if new_base == base:
+        print(f"already named: {nid}")
+        return
+    new_rel = os.path.join(os.path.dirname(nid), new_base) if os.path.dirname(nid) else new_base
+    new_abs = os.path.join(root_abs, new_rel)
+    if os.path.exists(new_abs):
+        sys.exit(f"error: {new_rel} already exists")
+    plans = _relink_plans(root_abs, nodes, nid, new_rel, skip=(nid,))
+    if args.dry_run:
+        print(f"dry-run: would rename {nid} -> {new_rel}")
+        for src, _p, _t in plans:
+            print(f"dry-run: would rewrite links in {src}")
+        return
+    for _src, path, new_text in plans:
+        _write_atomic(path, new_text)
+    os.rename(os.path.join(root_abs, nid), new_abs)
+    print(f"renamed: {nid} -> {new_rel}")
+    for src, _p, _t in plans:
+        print(f"relinked: {src}")
+    if not plans:
+        print("(no entry linked to it)")
+
+
+def _index_db_path(root):
+    """`<root>/../.index/kb.db` — kb_index.index_db_path without importing it
+    (kb_graph stays plain-python3; the vector tables are never touched)."""
+    return os.path.normpath(os.path.join(os.path.abspath(root), "..", ".index", "kb.db"))
+
+
+def cmd_relink(root, nodes, args):
+    """Repair links to paths the index knows have moved.
+
+    ``kb_index.py`` records a move whenever a re-index finds a known ``id``
+    at a new relpath while the old file is gone (a manual ``mv`` or a rename
+    done outside ``rename``). This command rewrites every link and
+    ``superseded_by:`` that still points at an old path, in the order the
+    moves were recorded, so chains resolve hop by hop.
+    """
+    db = _index_db_path(root)
+    if not os.path.exists(db):
+        sys.exit(f"error: no index at {db} — run a search or `kb_index.py` first")
+    import sqlite3
+    conn = sqlite3.connect(db)
+    try:
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "moves" not in names:
+            print("nothing to relink (index predates move tracking; a re-index adds it)")
+            return
+        moves = conn.execute(
+            "SELECT id, old_relpath, new_relpath FROM moves ORDER BY rowid").fetchall()
+    finally:
+        conn.close()
+    root_abs = os.path.abspath(root)
+    total = 0
+    for eid, old_rel, new_rel in moves:
+        if new_rel not in nodes or old_rel in nodes:
+            continue  # target gone again, or the old path is back: not a live move
+        plans = _relink_plans(root_abs, nodes, old_rel, new_rel)
+        for src, path, new_text in plans:
+            if args.dry_run:
+                print(f"dry-run: would relink {src}: {old_rel} -> {new_rel}")
+            else:
+                _write_atomic(path, new_text)
+                print(f"relinked {src}: {old_rel} -> {new_rel}")
+            total += 1
+    if total == 0:
+        print("nothing to relink")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--root", default=".claude/knowledge/entries",
@@ -987,6 +1332,30 @@ def main():
                         help="write the KB as an OKF-style index.md (title + description per entry)")
     im.add_argument("--out", default=None, metavar="FILE",
                     help="output file (default: stdout)")
+    mg = sub.add_parser("migrate", help="add the schema-3 fields where missing (idempotent)")
+    mg.add_argument("--to", type=int, required=True, metavar="N",
+                    help="target schema_version (3)")
+    mg.add_argument("--by", default="claude-code",
+                    help="generated.by actor for entries without one (default: %(default)s)")
+    mg.add_argument("--tz", default=None, metavar="+HH:MM",
+                    help="time zone of the filename timestamps (default: this machine's)")
+    mg.add_argument("--dry-run", action="store_true",
+                    help="report what would change without writing")
+    vf = sub.add_parser("verify", help="append a verified event to an entry")
+    vf.add_argument("entry", help="entry to mark (unique filename substring)")
+    vf.add_argument("--by", required=True,
+                    help="who checked it: human:<handle> | claude-code[/<model-id>] | process:<name>")
+    vf.add_argument("--at", default=None, help="ISO 8601 datetime (default: now)")
+    vf.add_argument("--dry-run", action="store_true",
+                    help="print the event without writing")
+    rn = sub.add_parser("rename", help="change an entry's slug and rewrite every link to it")
+    rn.add_argument("entry", help="entry to rename (unique filename substring)")
+    rn.add_argument("new_slug", help="new kebab-case slug (prefix and directory stay)")
+    rn.add_argument("--dry-run", action="store_true",
+                    help="print the planned rename and rewrites without writing")
+    rl = sub.add_parser("relink", help="repair links to paths the index recorded as moved")
+    rl.add_argument("--dry-run", action="store_true",
+                    help="print the planned rewrites without writing")
     li = sub.add_parser("lint")
     li.add_argument("files", nargs="*",
                     help="limit findings to these files (e.g. staged entries)")
@@ -1039,6 +1408,14 @@ def main():
         cmd_supersede(args.root, nodes, edges, args)
     elif args.cmd == "index-md":
         cmd_index_md(nodes, args.out)
+    elif args.cmd == "migrate":
+        cmd_migrate(args.root, nodes, args)
+    elif args.cmd == "verify":
+        cmd_verify(args.root, nodes, args)
+    elif args.cmd == "rename":
+        cmd_rename(args.root, nodes, args)
+    elif args.cmd == "relink":
+        cmd_relink(args.root, nodes, args)
     elif args.cmd == "lint":
         registry = args.registry or os.path.join(args.root, "..", "CLAUDE.md")
         cmd_lint(nodes, edges, problems, registry, args.files, args.json,

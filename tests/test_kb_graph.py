@@ -10,6 +10,8 @@ broken-link vs out-of-tree distinction behave as in production.
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -285,11 +287,16 @@ def test_lint_schema_gate_declaration_env_and_flag():
         assert res.returncode == 0, (res.stdout, res.stderr)
         found = {(f["check"], f["severity"]) for f in json.loads(res.stdout)}
         assert ("missing-description", "advisory") in found, found
-        # --schema 2 enforces
+        # --schema 2 enforces; the schema-3 checks stay advisory
         res = lint("--schema", "2")
         assert res.returncode == 1, res.stdout
         assert {(f["check"], f["severity"]) for f in json.loads(res.stdout)} == \
-            {("missing-description", "error")}, res.stdout
+            {("missing-description", "error"), ("missing-id", "advisory"),
+             ("missing-generated", "advisory")}, res.stdout
+        # --schema 3 enforces those too
+        res = lint("--schema", "3")
+        assert {f["check"] for f in json.loads(res.stdout) if f["severity"] == "error"} == \
+            {"missing-description", "missing-id", "missing-generated"}, res.stdout
         # env overrides the (missing) declaration
         res = lint(env={"CCMEMO_SCHEMA_VERSION": "2"})
         assert res.returncode == 1, res.stdout
@@ -304,8 +311,8 @@ def test_lint_schema_gate_declaration_env_and_flag():
         # text output names the advisory block and the declaration to raise
         res = subprocess.run([sys.executable, KB_GRAPH, "--root", root, "--schema", "1", "lint"],
                              capture_output=True, text=True, timeout=30)
-        assert "advisory" in res.stdout and "schema_version: 2" in res.stdout, res.stdout
-        assert res.stdout.rstrip().endswith("0 finding(s), 1 advisory"), res.stdout
+        assert "advisory" in res.stdout and "schema_version" in res.stdout, res.stdout
+        assert res.stdout.rstrip().endswith("0 finding(s), 3 advisory"), res.stdout
         # a non-schema check is enforced even on an undeclared corpus
         with open(os.path.join(root, "20260701-100000-alice-nodesc.md"), "a",
                   encoding="utf-8") as f:
@@ -498,7 +505,9 @@ def test_cli_lint_supersede_checks_and_cycle_scoping():
         root = make_lineage_kb(base)
         res = run_cli(root, "--json", "lint")
         assert res.returncode == 1, (res.stdout, res.stderr)
-        findings = json.loads(res.stdout)
+        # the lineage fixture predates schema 3: drop its id/generated advisories
+        findings = [f for f in json.loads(res.stdout)
+                    if f["check"] not in ("missing-id", "missing-generated")]
         by_check = {}
         for f in findings:
             by_check.setdefault(f["check"], []).append(f["id"])
@@ -513,7 +522,8 @@ def test_cli_lint_supersede_checks_and_cycle_scoping():
         assert len(findings) == 6, findings
         # cycle findings are reported per member, so file scoping still hits
         res = run_cli(root, "--json", "lint", os.path.join(root, LIN_G))
-        scoped = json.loads(res.stdout)
+        scoped = [f for f in json.loads(res.stdout)
+                  if f["check"] not in ("missing-id", "missing-generated")]
         assert [(f["id"], f["check"]) for f in scoped] == \
             [(LIN_G, "supersede-cycle")], scoped
 
@@ -594,8 +604,8 @@ def test_lint_malformed_link_exactly_one_with_line_number():
         assert len(edges) == len(edges0) + 1, (len(edges0), len(edges))
         # no other finding changes: F adds exactly malformed-link and (having
         # no description: line, which would shift the line number under test)
-        # missing-description
-        assert len(problems) == len(problems0) + 2, (problems0, problems)
+        # missing-description, plus the schema-3 missing-id / missing-generated
+        assert len(problems) == len(problems0) + 4, (problems0, problems)
         # CLI surface: check name and exit code
         res = run_cli(root, "--json", "lint")
         assert res.returncode == 1, res.stdout
@@ -742,6 +752,250 @@ def test_supersede_refuses_bracket_replacement_title():
                       "--reason", "r", "--date", "2026-08-16")
         assert res.returncode != 0 and "square bracket" in res.stderr, res.stderr
         assert read(root, ENTRY_A) == before_a
+
+
+# --------------------------------------------------------------------------- #
+# Schema 3: migrate / verify / rename / relink and the trust-family lint checks
+# --------------------------------------------------------------------------- #
+
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+
+def _fm_lines(root, rel):
+    text = read(root, rel)
+    end = text.find("\n---", 3)
+    return text[4:end].splitlines()
+
+
+def test_schema3_migrate_is_idempotent_and_minimal():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        before_c = read(root, ENTRY_C)
+        res = run_cli(root, "migrate", "--to", "3", "--tz", "+09:00", "--dry-run")
+        assert res.returncode == 0 and "would add id, generated" in res.stdout, (res.stdout, res.stderr)
+        assert read(root, ENTRY_C) == before_c  # dry-run writes nothing
+        res = run_cli(root, "migrate", "--to", "3", "--tz", "+09:00")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        assert "skip (no frontmatter): " + ENTRY_D in res.stdout, res.stdout
+        assert "id added to 3, generated added to 3" in res.stdout, res.stdout
+        lines = _fm_lines(root, ENTRY_A)
+        assert lines[0] == "title: Topic A" and lines[1].startswith("id: "), lines
+        assert UUID_RE.match(lines[1][4:]), lines[1]
+        # generated sits right after created:, at = filename timestamp in the corpus TZ
+        i = lines.index("created: 2026-07-01")
+        assert lines[i + 1:i + 4] == ["generated:", "  by: claude-code",
+                                      "  at: 2026-07-01T10:00:00+09:00"], lines
+        # nothing else moved; body intact
+        assert read(root, ENTRY_A).endswith("escapes the repo\n")
+        nodes, _e, problems = kb_graph.load_graph(root)
+        assert nodes[ENTRY_A]["generated"] == {"by": "claude-code", "at": "2026-07-01T10:00:00+09:00"}
+        s3 = [(n, c) for n, c, _d in problems if c in ("missing-id", "missing-generated")]
+        assert s3 == [(ENTRY_D, "missing-id"), (ENTRY_D, "missing-generated")], s3
+        ids = {nodes[r]["id"] for r in (ENTRY_A, ENTRY_B, ENTRY_C)}
+        assert len(ids) == 3, ids
+        # verified is never backfilled
+        assert "verified" not in read(root, ENTRY_A)
+        # second run: no change at all
+        snapshot = {r: read(root, r) for r in (ENTRY_A, ENTRY_B, ENTRY_C)}
+        res = run_cli(root, "migrate", "--to", "3", "--tz", "+09:00")
+        assert res.returncode == 0 and "changed 0 entr" in res.stdout, res.stdout
+        assert {r: read(root, r) for r in (ENTRY_A, ENTRY_B, ENTRY_C)} == snapshot
+        # a custom actor, an unknown target schema
+        assert run_cli(root, "migrate", "--to", "4").returncode != 0
+        assert run_cli(root, "migrate", "--to", "3", "--by", "bob").returncode != 0
+
+
+def test_schema3_verify_appends_events_and_derives_tier():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        assert run_cli(root, "migrate", "--to", "3", "--tz", "+09:00").returncode == 0
+        res = run_cli(root, "verify", "topic-a", "--by", "human:alice",
+                      "--at", "2026-07-05T10:00:00+09:00")
+        assert res.returncode == 0 and "(tier: human)" in res.stdout, (res.stdout, res.stderr)
+        text = read(root, ENTRY_A)
+        assert "verified:\n  - by: human:alice\n    at: 2026-07-05T10:00:00+09:00\n" in text, text
+        assert text.index("generated:") < text.index("verified:") < text.index("status:"), text
+        nodes, _e, problems = kb_graph.load_graph(root)
+        assert nodes[ENTRY_A]["verified_tier"] == "human"
+        assert not [p for p in problems if p[1] in ("invalid-actor", "verification-expired")], problems
+        # same event again: idempotent
+        res = run_cli(root, "verify", "topic-a", "--by", "human:alice", "--at", "2026-07-05T10:00:00+09:00")
+        assert "already recorded" in res.stdout and read(root, ENTRY_A) == text
+        # a later machine check becomes the latest verifier
+        res = run_cli(root, "verify", "topic-a", "--by", "claude-code/claude-fable-5-1",
+                      "--at", "2026-07-06T10:00:00+09:00")
+        assert res.returncode == 0 and "(tier: machine)" in res.stdout, res.stdout
+        nodes, _e, _p = kb_graph.load_graph(root)
+        assert nodes[ENTRY_A]["verified_tier"] == "machine"
+        assert nodes[ENTRY_A]["verified_at"] == "2026-07-06T10:00:00+09:00"
+        # an event older than generated.at is recorded but flagged as expired
+        res = run_cli(root, "verify", "topic-b", "--by", "process:gate", "--at", "2026-06-01T00:00:00+09:00")
+        assert res.returncode == 0 and "expired" in res.stderr, (res.stdout, res.stderr)
+        nodes, _e, problems = kb_graph.load_graph(root)
+        assert nodes[ENTRY_B]["verified_tier"] == ""
+        assert (ENTRY_B, "verification-expired") in [(p[0], p[1]) for p in problems], problems
+        # invalid actor / time: nothing written
+        before = read(root, ENTRY_C)
+        assert run_cli(root, "verify", "orphan-c", "--by", "carol").returncode != 0
+        assert run_cli(root, "verify", "orphan-c", "--by", "human:carol", "--at", "soon").returncode != 0
+        res = run_cli(root, "verify", "orphan-c", "--by", "human:carol", "--dry-run")
+        assert res.returncode == 0 and "dry-run" in res.stdout
+        assert read(root, ENTRY_C) == before
+        # default --at is now, with an offset
+        res = run_cli(root, "verify", "orphan-c", "--by", "human:carol")
+        assert res.returncode == 0, res.stderr
+        nodes, _e, _p = kb_graph.load_graph(root)
+        assert re.search(r"[+-]\d{2}:\d{2}$", nodes[ENTRY_C]["verified_at"]), nodes[ENTRY_C]
+
+
+def test_schema3_rename_changes_slug_only_and_rewrites_links():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        assert run_cli(root, "migrate", "--to", "3", "--tz", "+09:00").returncode == 0
+        # C: superseded_by A (root-relative); E: directory-relative link to A
+        with open(os.path.join(root, ENTRY_C), "a", encoding="utf-8") as f:
+            pass
+        c_text = read(root, ENTRY_C).replace("status: active", f"status: superseded\nsuperseded_by: {ENTRY_A}")
+        with open(os.path.join(root, ENTRY_C), "w", encoding="utf-8") as f:
+            f.write(c_text)
+        add_entry_e(root)
+        with open(os.path.join(root, ENTRY_E), "a", encoding="utf-8") as f:
+            f.write(f"- see: [Topic A]({os.path.basename(ENTRY_A)}) — dir-relative on purpose\n")
+        nodes, _e, _p = kb_graph.load_graph(root)
+        old_id = nodes[ENTRY_A]["id"]
+        new_rel = "2026/07/20260701-100000-alice-docker-lessons.md"
+
+        res = run_cli(root, "rename", "topic-a", "docker-lessons", "--dry-run")
+        assert res.returncode == 0 and f"would rename {ENTRY_A} -> {new_rel}" in res.stdout, res.stdout
+        assert os.path.exists(os.path.join(root, ENTRY_A))
+        res = run_cli(root, "rename", "topic-a", "docker-lessons")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        assert not os.path.exists(os.path.join(root, ENTRY_A)) and os.path.exists(os.path.join(root, new_rel))
+        assert f"relinked: {ENTRY_B}" in res.stdout and f"relinked: {ENTRY_C}" in res.stdout \
+            and f"relinked: {ENTRY_E}" in res.stdout, res.stdout
+        assert f"({new_rel})" in read(root, ENTRY_B) and f"({ENTRY_A})" not in read(root, ENTRY_B)
+        assert f"superseded_by: {new_rel}" in read(root, ENTRY_C)
+        assert f"({os.path.basename(new_rel)}) — dir-relative" in read(root, ENTRY_E), read(root, ENTRY_E)
+        nodes, edges, problems = kb_graph.load_graph(root)
+        assert nodes[new_rel]["id"] == old_id  # identity survives the rename
+        stale = [p for p in problems if p[1] in ("broken-link", "superseded-broken")
+                 and os.path.basename(ENTRY_A) in p[2]]
+        assert not stale, stale  # (A's own pre-existing broken ref is unrelated)
+        assert (ENTRY_B, new_rel) in {(s, d) for s, d, _k, _r in edges}
+        # refusals
+        assert run_cli(root, "rename", "docker-lessons", "Bad_Slug").returncode != 0
+        assert run_cli(root, "rename", "docker-lessons", "orphan-c").returncode == 0  # different prefix: ok
+        assert run_cli(root, "rename", "notes", "x").returncode != 0  # not a dated name
+
+
+def test_schema3_rename_keeps_hyphenated_author_segment():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        rel = "2026/07/20260701-150000-lev-nas-topic-x.md"
+        with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+            f.write('---\ntitle: Hyphenated author\nauthor: "@lev-nas"\ncreated: 2026-07-01\n---\n\nx\n')
+        res = run_cli(root, "rename", "lev-nas-topic-x", "topic-y")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        assert os.path.exists(os.path.join(root, "2026/07/20260701-150000-lev-nas-topic-y.md")), os.listdir(os.path.join(root, "2026/07"))
+        # without an author: field the first-hyphen split is all there is
+        rel2 = "2026/07/20260701-160000-solo-topic-z.md"
+        with open(os.path.join(root, rel2), "w", encoding="utf-8") as f:
+            f.write("---\ntitle: No author\n---\n\nx\n")
+        res = run_cli(root, "rename", "solo-topic-z", "topic-w")
+        assert res.returncode == 0 and os.path.exists(os.path.join(root, "2026/07/20260701-160000-solo-topic-w.md")), res.stderr
+
+
+def test_schema3_relink_repairs_links_recorded_as_moves():
+    import sqlite3
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        assert run_cli(root, "migrate", "--to", "3", "--tz", "+09:00").returncode == 0
+        nodes, _e, _p = kb_graph.load_graph(root)
+        # A was moved by hand (mv), B still links the old path
+        moved = "2026/07/20260701-100000-alice-moved-a.md"
+        os.rename(os.path.join(root, ENTRY_A), os.path.join(root, moved))
+        db_dir = os.path.join(root, "..", ".index")
+        os.makedirs(db_dir)
+        conn = sqlite3.connect(os.path.join(db_dir, "kb.db"))
+        conn.execute("CREATE TABLE moves (id TEXT, old_relpath TEXT, new_relpath TEXT, at INTEGER)")
+        conn.execute("INSERT INTO moves VALUES (?, ?, ?, 0)", (nodes[ENTRY_A]["id"], ENTRY_A, moved))
+        conn.commit()
+        conn.close()
+        _n, _e, problems = kb_graph.load_graph(root)
+        assert (ENTRY_B, "broken-link") in [(p[0], p[1]) for p in problems]
+        res = run_cli(root, "relink", "--dry-run")
+        assert res.returncode == 0 and f"would relink {ENTRY_B}" in res.stdout, res.stdout
+        assert f"({ENTRY_A})" in read(root, ENTRY_B)
+        res = run_cli(root, "relink")
+        assert res.returncode == 0 and f"relinked {ENTRY_B}: {ENTRY_A} -> {moved}" in res.stdout, res.stdout
+        assert f"({moved})" in read(root, ENTRY_B)
+        _n, _e, problems = kb_graph.load_graph(root)
+        stale = [p for p in problems if p[1] == "broken-link" and os.path.basename(ENTRY_A) in p[2]]
+        assert not stale, stale
+        res = run_cli(root, "relink")
+        assert "nothing to relink" in res.stdout
+        # no index at all
+        shutil.rmtree(db_dir)
+        assert run_cli(root, "relink").returncode != 0
+
+
+def test_schema3_lint_checks_and_severities():
+    with tempfile.TemporaryDirectory() as base:
+        root = os.path.join(base, "repo", ".claude", "knowledge", "entries", "2026", "07")
+        os.makedirs(root)
+        root = os.path.dirname(os.path.dirname(root))
+        gen = "generated:\n  by: human:alice\n  at: 2026-07-01T10:00:00+09:00\n"
+        desc = 'description: "Open when the schema-3 lint fixture needs a trigger condition long enough to pass."\n'
+        entries = {
+            "2026/07/20260701-100000-alice-dup1.md":
+                "---\ntitle: Same title\nid: 11111111-1111-4111-8111-111111111111\n" + gen + desc + "---\n\nx\n",
+            "2026/07/20260701-100001-alice-dup2.md":
+                "---\ntitle: same  title\nid: 11111111-1111-4111-8111-111111111111\n" + gen + desc + "---\n\nx\n",
+            "2026/07/20260701-100002-alice-actor.md":
+                "---\ntitle: Bad actor\nid: 22222222-2222-4222-8222-222222222222\n"
+                "generated: {by: bob, at: 2026-07-01T10:00:00+09:00}\n" + desc + "---\n\nx\n",
+            "2026/07/20260701-100003-alice-expired.md":
+                "---\ntitle: Expired\nid: 33333333-3333-4333-8333-333333333333\n" + gen +
+                "verified:\n  - by: human:bob\n    at: 2026-06-01T10:00:00+09:00\n" + desc + "---\n\nx\n",
+            "2026/07/20260701-100004-alice-stale.md":
+                "---\ntitle: Stale\nid: 44444444-4444-4444-8444-444444444444\n" + gen +
+                "stale_after: 2020-01-01\n" + desc + "---\n\nx\n",
+            "2026/07/20260701-100005-alice-badgen.md":
+                "---\ntitle: Bad generated\nid: 55555555-5555-4555-8555-555555555555\n"
+                "generated: yesterday\n" + desc + "---\n\nx\n",
+            "2026/07/20260701-100006-alice-badver.md":
+                "---\ntitle: Bad verifier\nid: 66666666-6666-4666-8666-666666666666\n" + gen +
+                "verified:\n  - by: lint\n    at: 2026-07-02T10:00:00+09:00\n" + desc + "---\n\nx\n",
+        }
+        for rel, text in entries.items():
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+                f.write(text)
+        with open(os.path.join(root, "..", "CLAUDE.md"), "w", encoding="utf-8") as f:
+            f.write("---\nschema_version: 3\n---\n# KB\n")
+        res = run_cli(root, "--json", "lint")
+        assert res.returncode == 1, (res.stdout, res.stderr)
+        sev = {(os.path.basename(f["id"])[22:], f["check"], f["severity"]) for f in json.loads(res.stdout)}
+        expected = {
+            ("dup1.md", "duplicate-id", "error"), ("dup2.md", "duplicate-id", "error"),
+            ("dup1.md", "duplicate-title", "advisory"), ("dup2.md", "duplicate-title", "advisory"),
+            ("actor.md", "invalid-actor", "error"),
+            ("expired.md", "verification-expired", "advisory"),
+            ("stale.md", "stale-after-passed", "advisory"),
+            ("badgen.md", "missing-generated", "error"),
+            ("badver.md", "invalid-actor", "error"),
+        }
+        assert sev == expected, sev ^ expected
+        # text output: the two advisory blocks are distinct
+        res = run_cli(root, "lint")
+        assert "informational at every schema_version" in res.stdout, res.stdout
+        assert "enforced at a later schema_version" not in res.stdout, res.stdout
+        # below schema 3 the identity/actor checks are gated, the notices stay advisory
+        res = run_cli(root, "--json", "--schema", "2", "lint")
+        assert res.returncode == 0, res.stdout
+        assert {f["severity"] for f in json.loads(res.stdout)} == {"advisory"}
+        res = run_cli(root, "--schema", "2", "lint")
+        assert "enforced at a later schema_version (latest: 3)" in res.stdout, res.stdout
+        assert "informational at every schema_version" in res.stdout, res.stdout
 
 
 def main() -> int:
