@@ -6,11 +6,14 @@ You have updated ccmemo, or are about to. This page tells you whether your
 knowledge base needs any work afterwards, and how to do that work if you
 choose to. Most updates need nothing from you.
 
-A few words used below:  
-your **knowledge base** is the `.claude/knowledge/` folder of a project.  
-An **entry** is one Markdown file in it.  
-The **frontmatter** is the block between the `---` lines at the top of an entry.  
-The **lint** is the check you run with `kb_graph.py lint` (some people also run it from a pre-commit hook).
+## Terms used on this page
+
+| Term | Meaning |
+|---|---|
+| knowledge base | The `.claude/knowledge/` folder of a project. |
+| entry | One Markdown file in the knowledge base. |
+| frontmatter | The block between the `---` lines at the top of an entry. |
+| lint | The check you run with `kb_graph.py lint`. Some people also run it from a pre-commit hook. |
 
 ## Do I need to do anything?
 
