@@ -89,4 +89,8 @@ Non-active entries carry a body-top warning banner so direct readers see the sta
 - Do NOT add links to subdirectory CLAUDE.md files — use tag search to find entries
 - Existing entries without timestamp prefix remain as-is (no rename)
 - New tags **must** be added to the Tag Registry within the same operation
+- `tags:` is a YAML list, one quoted `"#tag"` per line. The older single-line form
+  `tags: "#tag1 #tag2"` is still read by every tool — never bulk-rewrite old entries
+- `status:` omitted or blank means `active`; the index, the graph CLI and the prompt
+  hook all apply that same default
 - See `/record-knowledge` skill for full details

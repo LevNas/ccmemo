@@ -16,7 +16,10 @@ title: webpack 6 requires updated config format
 author: "@alice"
 created: 2026-03-08
 status: active
-tags: "#webpack #migration #pitfall"
+tags:
+  - "#webpack"
+  - "#migration"
+  - "#pitfall"
 ---
 
 webpack 6 dropped support for `module.rules[].loader` shorthand.

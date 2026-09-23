@@ -75,7 +75,10 @@ title: Docker Compose port conflict with host nginx
 author: "@alice"
 created: 2026-03-02
 status: active
-tags: "#docker #nginx #pitfall"
+tags:
+  - "#docker"
+  - "#nginx"
+  - "#pitfall"
 ---
 
 When running `docker compose up`, port 80 conflicts with the host's nginx.

@@ -48,7 +48,9 @@ status: draft | active | superseded | deprecated
 type: knowledge | overview | detail | fragment | synthesis
 confidence: low | mid | high
 superseded_by: YYYY/MM/newer-entry-slug.md   # only when status: superseded
-tags: "#tag1 #tag2 ..."
+tags:
+  - "#tag1"
+  - "#tag2"
 ---
 
 <body — concrete facts, procedures, code examples, etc.>
@@ -58,6 +60,11 @@ tags: "#tag1 #tag2 ..."
 - amends: [corrected entry title](YYYY/MM/slug.md) — what this corrects
 - extends: [base entry title](YYYY/MM/slug.md) — what this elaborates
 ```
+
+- `tags:` is a YAML list, one quoted `"#tag"` per line (the older single-line string
+  form is still accepted by every reader — never bulk-rewrite existing entries)
+- `status:` may be omitted; readers treat a missing or blank status as `active`
+- Titles may contain `: ` unquoted; the parser keeps the whole remainder as the title
 
 - Keep entries focused and under **100 KB** where possible
 - When creating an entry that exceeds **300 lines**, consider splitting it
