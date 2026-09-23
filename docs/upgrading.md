@@ -6,11 +6,11 @@ You have updated ccmemo, or are about to. This page tells you whether your
 knowledge base needs any work afterwards, and how to do that work if you
 choose to. Most updates need nothing from you.
 
-A few words used below: your **knowledge base** is the `.claude/knowledge/`
-folder of a project. An **entry** is one Markdown file in it. The
-**frontmatter** is the block between the `---` lines at the top of an entry.
-The **lint** is the check you run with `kb_graph.py lint` (some people also
-run it from a pre-commit hook).
+A few words used below:  
+your **knowledge base** is the `.claude/knowledge/` folder of a project.  
+An **entry** is one Markdown file in it.  
+The **frontmatter** is the block between the `---` lines at the top of an entry.  
+The **lint** is the check you run with `kb_graph.py lint` (some people also run it from a pre-commit hook).
 
 ## Do I need to do anything?
 
@@ -22,19 +22,20 @@ run it from a pre-commit hook).
 
 ## What happens on its own
 
-**The plugin itself.** `/plugin update ccmemo` fetches the new version and
-`/reload-plugins` activates it in the running session. That is the whole
-update.
+**The plugin itself.**  
+`/plugin update ccmemo` fetches the new version and `/reload-plugins`
+activates it in the running session. That is the whole update.
 
-**The search index.** ccmemo keeps a search index in
-`.claude/knowledge/.index/`. When a new version changes its layout, the next
-search rebuilds what it needs from your Markdown files. You never rebuild it
-by hand.
+**The search index.**  
+ccmemo keeps a search index in `.claude/knowledge/.index/`. When a new
+version changes its layout, the next search rebuilds what it needs from your
+Markdown files. You never rebuild it by hand.
 
-**New rules for entries are opt-in.** The lint checks entries against a set
-of rules, and new versions sometimes add rules. A new rule does not fail your
-lint until you say your knowledge base follows it. You say so by writing a
-rule version at the top of `.claude/knowledge/CLAUDE.md`:
+**New rules for entries are opt-in.**  
+The lint checks entries against a set of rules, and new versions sometimes
+add rules. A new rule does not fail your lint until you say your knowledge
+base follows it. You say so by writing a rule version at the top of
+`.claude/knowledge/CLAUDE.md`:
 
 ```yaml
 ---
