@@ -122,7 +122,9 @@ Captures detailed working context that is too granular for plan-vN.md but essent
 ---
 created: YYYY-MM-DD HH:MM:SS
 status: active | consumed
-tags: "#tag1 #tag2"
+tags:
+  - "#tag1"
+  - "#tag2"
 ---
 
 ## HH:MM - <summary>

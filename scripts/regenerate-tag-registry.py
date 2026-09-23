@@ -15,29 +15,18 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+from lib import frontmatter as _frontmatter  # noqa: E402
+
 
 def extract_tags_from_entry(filepath: Path) -> list[str]:
-    """Extract tags from a single entry's YAML frontmatter."""
+    """Extract tags from a single entry's YAML frontmatter (either form)."""
     try:
         content = filepath.read_text(encoding="utf-8")
     except OSError:
         return []
-
-    # Find YAML frontmatter
-    if not content.startswith("---"):
-        return []
-    end = content.find("---", 3)
-    if end == -1:
-        return []
-    frontmatter = content[3:end]
-
-    # Extract tags line
-    for line in frontmatter.splitlines():
-        if line.strip().startswith("tags:"):
-            tags_str = line.split(":", 1)[1].strip().strip('"').strip("'")
-            return re.findall(r"#[a-z][a-z0-9-]*", tags_str)
-
-    return []
+    meta, _ = _frontmatter.parse(content)
+    return meta["tags"]
 
 
 def scan_entries(entries_dir: Path) -> dict[str, int]:

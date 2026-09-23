@@ -17,10 +17,16 @@ HIT_COUNT_LIMIT=50
 ENTRIES_DIR=".claude/knowledge/entries"
 ALLOWED_STATUS="${CCMEMO_SEARCH_STATUS:-active}"
 
+# Frontmatter is read by the shared parser (hooks/lib/frontmatter.py) so the
+# hook, the index and the graph CLI agree on tag forms and the status default.
+FRONTMATTER_PY="$(dirname "${BASH_SOURCE[0]}")/lib/frontmatter.py"
+
 # Silently no-op if required tools or entries dir are missing.
 command -v jq >/dev/null 2>&1 || exit 0
 command -v rg >/dev/null 2>&1 || exit 0
 command -v mecab >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+[ -f "$FRONTMATTER_PY" ] || exit 0
 [ -d "$ENTRIES_DIR" ] || exit 0
 
 INPUT=$(cat)
@@ -56,35 +62,40 @@ done <<< "$KEYWORDS"
 [ "${#file_scores[@]}" -gt 0 ] || exit 0
 set -u
 
+# Rank candidates, then read status / superseded_by / title for all of them
+# in ONE parser call (one interpreter start, not one per file). The parser
+# reads the frontmatter block only, so body text that happens to start a
+# line with "status:" cannot leak in, and a missing status is "active".
+mapfile -t ranked < <(
+  for f in "${!file_scores[@]}"; do
+    printf '%s %s\n' "${file_scores[$f]}" "$f"
+  done | sort -rn | sed 's/^[^ ]* //'
+)
+# Separator is US (0x1f), not tab: bash `read` collapses runs of whitespace
+# IFS characters, which would shift columns whenever superseded_by is empty.
+declare -A fm_status fm_superseded fm_title
+while IFS=$'\x1f' read -r fpath fstatus fsuperseded ftitle; do
+  [ -n "$fpath" ] || continue
+  fm_status[$fpath]=$fstatus
+  fm_superseded[$fpath]=$fsuperseded
+  fm_title[$fpath]=$ftitle
+done < <(python3 "$FRONTMATTER_PY" --sep $'\x1f' --fields status,superseded_by,title -- "${ranked[@]}" 2>/dev/null || true)
+
 # Walk the ranking until MAX_RESULTS allowed entries are collected, so
 # entries dropped by the status filter do not consume result slots.
 RESULTS=""
 result_count=0
-while IFS= read -r line; do
-  filepath=${line#* }
+for filepath in "${ranked[@]}"; do
   [ -n "$filepath" ] || continue
-  # Read status / superseded_by from the frontmatter block only, so body
-  # text that happens to start a line with "status:" cannot leak in.
-  status=""
-  superseded_by=""
-  IFS=$'\t' read -r status superseded_by < <(awk '
-    { sub(/\r$/, "") }
-    NR == 1 { if ($0 != "---") exit; next }
-    $0 == "---" { exit }
-    sub(/^status:[[:space:]]*/, "")        { gsub(/"/, ""); sub(/[[:space:]]+$/, ""); s = $0 }
-    sub(/^superseded_by:[[:space:]]*/, "") { gsub(/"/, ""); sub(/[[:space:]]+$/, ""); sb = $0 }
-    END { printf "%s\t%s\n", s, sb }
-  ' "$filepath" 2>/dev/null) || true
-  status=${status:-active}
+  status=${fm_status[$filepath]:-active}
+  superseded_by=${fm_superseded[$filepath]:-}
   if [ "$ALLOWED_STATUS" != "all" ]; then
     case ",${ALLOWED_STATUS}," in
       *",${status},"*) ;;
       *) continue ;;
     esac
   fi
-  # `|| true`: with pipefail a title-less file would otherwise abort the
-  # whole hook (rg exits 1), making the basename fallback unreachable.
-  title=$(rg --no-filename '^title:' "$filepath" 2>/dev/null | head -1 | sed 's/^title:[[:space:]]*//' | tr -d '"' || true)
+  title=${fm_title[$filepath]:-}
   [ -n "$title" ] || title=$(basename "$filepath" .md)
   note=""
   if [ "$status" != "active" ]; then
@@ -95,11 +106,7 @@ while IFS= read -r line; do
   RESULTS="${RESULTS}- ${title} (${filepath})${note}"$'\n'
   result_count=$((result_count + 1))
   [ "$result_count" -lt "$MAX_RESULTS" ] || break
-done < <(
-  for f in "${!file_scores[@]}"; do
-    printf '%s %s\n' "${file_scores[$f]}" "$f"
-  done | sort -rn
-)
+done
 
 [ -n "$RESULTS" ] || exit 0
 

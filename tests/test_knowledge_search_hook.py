@@ -117,6 +117,31 @@ def test_missing_status_treated_as_active():
         shutil.rmtree(workdir)
 
 
+def test_list_tags_colon_title_and_blank_fields():
+    """Shared-parser regression: YAML-list tags, an unquoted `title: ADR: ...`
+    and an empty superseded_by column must not shift or drop the title."""
+    workdir, bindir = _make_workdir()
+    try:
+        path = os.path.join(workdir, ".claude", "knowledge", "entries", "2026", "listtags.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("---\n"
+                    "title: ADR: colon title kept whole\n"
+                    "status:\n"
+                    "tags:\n"
+                    "  - \"#alpha\"\n"
+                    "  - beta\n"
+                    "---\n"
+                    "\nalphaword\n")
+        _write_entry(workdir, "dep.md", "Deprecated listmate", "alphaword", status="deprecated")
+        code, ctx = _run_hook(workdir, bindir)
+        check("list tags: hook exits 0", code == 0, f"code={code}")
+        check("list tags: colon title shown whole", "- ADR: colon title kept whole (" in ctx, ctx)
+        check("list tags: blank status is active (no annotation)", "[status:" not in ctx, ctx)
+        check("list tags: deprecated sibling still excluded", "dep.md" not in ctx, ctx)
+    finally:
+        shutil.rmtree(workdir)
+
+
 def test_widened_allowlist_annotates():
     workdir, bindir = _make_workdir()
     try:

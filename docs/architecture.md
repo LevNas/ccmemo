@@ -5,13 +5,15 @@ it's here for contributors and anyone curious about the design.
 
 ## Scripts & Skill Wiring
 
-Three scripts under `scripts/` back the search and review skills:
+Three scripts under `scripts/` back the search and review skills, and one shared
+library module keeps their view of an entry's frontmatter identical:
 
 | Script | Runtime | Role | Since |
 |--------|---------|------|-------|
 | `kb_index.py` | `uv` (fastembed, sqlite-vec) | Build/refresh the per-machine vector index (sha256 incremental, idempotent) | v1.11.0 |
 | `kb_search.py` | `uv` (fastembed, sqlite-vec) | Hybrid query: lexical + vector arms, RRF fusion, `see:` 1-hop expansion, frontmatter filters | v1.11.0 |
 | `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / `lineage` / `link-add` / deterministic `lint`; `union-recover` for append-only files diverged across checkouts (v1.23.0) | v1.15.0 |
+| `hooks/lib/frontmatter.py` | plain `python3` (pure stdlib) | The one frontmatter parser every reader imports (both scripts above, `regenerate-tag-registry.py`, the UserPromptSubmit hook via its CLI): YAML subset, normalized view — `tags` always a `#tag` list from either form, missing `status` → `active` | v1.24.0 |
 
 How the skills reach them:
 

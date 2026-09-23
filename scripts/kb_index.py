@@ -135,25 +135,18 @@ class Entry:
 
 
 _SEE_LINK_RE = re.compile(r"^-\s+see:\s*\[[^\]]*\]\(([^)]+)\)", re.MULTILINE)
-_TAG_RE = re.compile(r"#[A-Za-z][A-Za-z0-9-]*")
+
+# One frontmatter parser for every reader (hooks/lib/frontmatter.py): reads
+# both tag forms (quoted string and YAML list) and defaults a missing status
+# to "active", so the index, the graph CLI and the prompt hook agree.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+from lib import frontmatter as _frontmatter  # noqa: E402
 
 
-def _split_frontmatter(content: str) -> tuple[dict[str, str], str]:
-    """Return (frontmatter dict, body). Handles missing/blank frontmatter."""
-    if not content.startswith("---"):
-        return {}, content
-    end = content.find("\n---", 3)
-    if end == -1:
-        return {}, content
-    fm_block = content[3:end]
-    body = content[end + 4 :].lstrip("\n")
-    fm: dict[str, str] = {}
-    for line in fm_block.splitlines():
-        if ":" not in line:
-            continue
-        key, _, val = line.partition(":")
-        fm[key.strip()] = val.strip().strip('"').strip("'")
-    return fm, body
+def _split_frontmatter(content: str) -> tuple[dict, str]:
+    """Return (normalized frontmatter, body). Kept as the module-level entry
+    point kb_search.py imports; delegates to the shared parser."""
+    return _frontmatter.parse(content)
 
 
 def parse_entry(path: Path, root: Path) -> Entry | None:
@@ -164,7 +157,7 @@ def parse_entry(path: Path, root: Path) -> Entry | None:
 
     fm, body = _split_frontmatter(content)
     sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    tags = _TAG_RE.findall(fm.get("tags", ""))
+    tags = fm["tags"]
     see = [m.strip() for m in _SEE_LINK_RE.findall(body)]
     try:
         relpath = str(path.relative_to(root))
@@ -174,11 +167,11 @@ def parse_entry(path: Path, root: Path) -> Entry | None:
     entry = Entry(
         path=path,
         relpath=relpath,
-        title=fm.get("title", path.stem),
+        title=fm["title"] or path.stem,
         tags=tags,
-        status=fm.get("status", ""),
-        created=fm.get("created", ""),
-        type=fm.get("type", ""),
+        status=fm["status"],
+        created=fm["created"],
+        type=fm["type"],
         see=see,
         body=body,
         sha256=sha,

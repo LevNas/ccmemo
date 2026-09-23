@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.24.0] - 2026-09-23
+
+### Added
+- `hooks/lib/frontmatter.py`: one YAML-frontmatter parser shared by every
+  reader — `kb_index.py`, `kb_search.py`, `kb_graph.py`,
+  `regenerate-tag-registry.py` and the UserPromptSubmit hook. Pure stdlib
+  (runs under plain `python3` like the hooks and the graph CLI, where PyYAML
+  is not available). Reads the subset the entry schema uses — quoted/bare
+  scalars, block and flow lists, one level of nested mappings and lists of
+  mappings — and returns a normalized view: `tags` always a list of `#tag`
+  strings, `status` defaulting to `active`, scalar fields always present.
+  A CLI (`--fields`, `--sep`) lets the bash hook read status/superseded_by/
+  title for all candidates in one interpreter start.
+- `tests/test_frontmatter.py`: parser self-tests, including a cross-check
+  against PyYAML on strictly valid fixtures when it happens to be importable.
+
+### Changed
+- `tags:` written as a YAML list (`- "#tag"` per line) is now read
+  everywhere. Every previous reader was a flat `key: value` splitter, so a
+  list-form `tags:` was silently parsed as *no tags* (confirmed on a 388-entry
+  corpus written in list form: 0 entries had tags in the graph, now 388).
+  The documented canonical form becomes the list; the single-line string
+  form stays fully supported — do not bulk-rewrite existing entries.
+- Missing or blank `status:` now means `active` in `kb_index.py` /
+  `kb_search.py` too. Previously the search scripts stored `""` (so
+  `--status active` silently excluded frontmatter-less entries) while the
+  prompt hook already defaulted to `active`; the two disagreed on which
+  entries exist.
+- Tag pattern unified to `#[A-Za-z0-9][A-Za-z0-9_-]*`: `kb_index.py` used to
+  require a leading letter and dropped tags such as `#1password`.
+- Unquoted titles containing `: ` (e.g. `title: ADR: …`) are kept whole.
+  They are not strict YAML — PyYAML rejects them — which is one reason the
+  parser is a lenient subset implementation rather than a PyYAML wrapper.
+
+### Fixed
+- UserPromptSubmit hook: frontmatter is read by the shared parser instead of
+  an ad-hoc awk block, so tag/status semantics can no longer drift from the
+  index. Column transport uses the US separator, not tab, because bash
+  `read` collapses runs of whitespace IFS characters and an empty
+  `superseded_by` shifted the title column.
+
+Groundwork for the multi-corpus index: a `description` field and typed,
+labelled `see:` edges are planned next and need one parser that can read them.
+
 ## [1.23.1] - 2026-09-22
 
 ### Fixed

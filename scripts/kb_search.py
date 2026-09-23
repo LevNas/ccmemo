@@ -283,7 +283,7 @@ def make_snippet(path: Path, query: str) -> str:
         content = path.read_text(encoding="utf-8")
     except OSError:
         return ""
-    _, body = kbi._split_frontmatter(content)
+    _, body = kbi._split_frontmatter(content)  # shared parser via kb_index
     body = " ".join(body.split())
     lowered = body.lower()
     pos = -1

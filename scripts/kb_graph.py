@@ -79,6 +79,9 @@ import re
 import shutil
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks"))
+from lib import frontmatter as _frontmatter  # noqa: E402
 import tempfile
 from collections import deque
 
@@ -96,16 +99,13 @@ FILENAME_RE = re.compile(r"^\d{8}-\d{6}-.+\.md$")
 
 
 def parse_frontmatter(text):
-    meta = {}
-    if not text.startswith("---"):
-        return meta
-    end = text.find("\n---", 3)
-    if end == -1:
-        return meta
-    for line in text[3:end].splitlines():
-        m = re.match(r"^(\w+):\s*(.*)$", line.strip())
-        if m:
-            meta[m.group(1)] = m.group(2).strip().strip('"')
+    """Normalized frontmatter via the shared parser (hooks/lib/frontmatter.py).
+
+    ``tags`` is always a list of ``#tag`` strings (string or YAML-list source),
+    ``status`` defaults to "active" when absent. ``title`` stays "" when the
+    entry has none so lint can still report ``missing-title``.
+    """
+    meta, _body = _frontmatter.parse(text)
     return meta
 
 
@@ -129,7 +129,7 @@ def load_graph(root):
             meta = parse_frontmatter(text)
             nodes[nid] = {
                 "title": meta.get("title", ""),
-                "tags": set(re.findall(r"#[\w\-]+", meta.get("tags", ""))),
+                "tags": set(meta.get("tags", [])),
                 "status": meta.get("status", ""),
             }
             if not meta.get("title"):
