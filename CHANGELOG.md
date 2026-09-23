@@ -21,7 +21,7 @@ All notable changes to this project will be documented in this file.
   corpus and the migration steps for 1.24.0 and 1.26.x (bulk description
   recipe, link labels, raising the declaration). Linked from the README.
 
-Upgrade notes: [docs/upgrading.md](docs/upgrading.md#126x--description-and-link-labels-become-conventions-schema_version-2).
+Upgrade notes: [docs/upgrading.md](docs/upgrading.md#126-descriptions-and-link-labels).
 
 ## [1.26.0] - 2026-09-23
 
@@ -95,7 +95,7 @@ Upgrade notes: [docs/upgrading.md](docs/upgrading.md#126x--description-and-link-
   `description` when present; the keyword snippet no longer starts with the
   H1 (it repeated the title).
 
-Upgrade notes: [docs/upgrading.md](docs/upgrading.md#1240--one-frontmatter-parser-list-form-tags-status-default).
+Upgrade notes: [docs/upgrading.md](docs/upgrading.md#124-tags-and-status).
 
 ## [1.24.0] - 2026-09-23
 

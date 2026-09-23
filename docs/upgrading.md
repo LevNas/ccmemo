@@ -2,102 +2,133 @@
 
 > 日本語版: [upgrading.ja.md](upgrading.ja.md)
 
-How to move an existing knowledge base to a newer ccmemo. Only versions that
-need something from you have a section here; everything else upgrades
-silently. The [CHANGELOG](../CHANGELOG.md) links here from each such release.
+You have updated ccmemo, or are about to. This page tells you whether your
+knowledge base needs any work afterwards, and how to do that work if you
+choose to. Most updates need nothing from you.
 
-## How upgrades reach you
+A few words used below: your **knowledge base** is the `.claude/knowledge/`
+folder of a project. An **entry** is one Markdown file in it. The
+**frontmatter** is the block between the `---` lines at the top of an entry.
+The **lint** is the check you run with `kb_graph.py lint` (some people also
+run it from a pre-commit hook).
 
-- The plugin cache is keyed by `plugin.json` version: `/plugin update ccmemo`
-  fetches a release only when that version changed, and `/reload-plugins`
-  activates it in the running session.
-- The hybrid-search index (`.claude/knowledge/.index/kb.db`) is a derived
-  cache. When its schema changes, the next search or `kb_index.py` run
-  upgrades it in place from the Markdown — nothing is re-embedded and nothing
-  needs to be rebuilt by hand.
-- Entry conventions are versioned separately from the plugin. Your knowledge
-  base declares the conventions it commits to in the frontmatter of
-  `.claude/knowledge/CLAUDE.md`:
+## Do I need to do anything?
 
-  ```yaml
-  ---
-  schema_version: 2
-  ---
-  ```
+| You are updating from | What to read |
+|---|---|
+| 1.26.0 or later | Nothing to do. |
+| 1.25.x or 1.24.x | [1.26: descriptions and link labels](#126-descriptions-and-link-labels). Optional work; nothing breaks if you skip it. |
+| 1.23.x or older | The section above, plus [1.24: tags and status](#124-tags-and-status). No work needed there, but two behaviours change. |
 
-  Checks that a newer schema introduces are still *reported* on an older
-  corpus by `kb_graph.py lint` and by the post-write hook, but as **advisory**
-  findings that never fail the exit code, until you raise the declaration.
-  So updating the plugin does not turn a pre-commit lint red; migrating the
-  corpus and raising the number is a step you take when ready.
-  `kb_graph.py --schema 2 lint` previews what a higher declaration would
-  enforce; `CCMEMO_SCHEMA_VERSION=2` does the same for one shell.
+## What happens on its own
 
-## 1.26.x — `description` and link labels become conventions (schema_version 2)
+**The plugin itself.** `/plugin update ccmemo` fetches the new version and
+`/reload-plugins` activates it in the running session. That is the whole
+update.
 
-Search results (`kb_search.py --summary`) and the prompt hook now show each
-entry's `description`: its *trigger condition*, when to open it. Entries
-without one fall back to their lead paragraph, marked `(lead)`, so nothing
-breaks — but the point of the summary (choosing one entry without opening
-several) only works once descriptions exist.
+**The search index.** ccmemo keeps a search index in
+`.claude/knowledge/.index/`. When a new version changes its layout, the next
+search rebuilds what it needs from your Markdown files. You never rebuild it
+by hand.
 
-`kb_graph.py lint` gained four checks, enforced at `schema_version: 2` and
-advisory below it: `missing-description`, `description-length` (80–320
-characters), `unlabeled-link` (a `see:`/`ref:`/`amends:`/`extends:` line with
-nothing after the link) and `amends-` / `extends-unreciprocated`. New entries
-written by `/record-knowledge` already carry a description.
+**New rules for entries are opt-in.** The lint checks entries against a set
+of rules, and new versions sometimes add rules. A new rule does not fail your
+lint until you say your knowledge base follows it. You say so by writing a
+rule version at the top of `.claude/knowledge/CLAUDE.md`:
 
-### Migrating an existing corpus
+```yaml
+---
+schema_version: 2
+---
+```
 
-1. See where you stand:
-   `python3 scripts/kb_graph.py --root .claude/knowledge/entries --schema 2 lint`
-   lists every entry that would fail. `kb_graph.py index-md` prints how many
-   still lack a description.
-2. Add descriptions in batches. A description is not a summary (the title
-   already states the conclusion): it names the situations in which a future
-   reader should open the entry — the symptom, the question, the decision
-   being made — most typical first, 100–300 characters, phrased as
-   "open this when …" in the language the entry is written in. Hub entries
-   (`synthesis` / `overview`) end by saying they are also the hub for their
-   topic's related entries. Write it from the entry's problem or background
-   section; do not copy the title, and do not use double quotes inside the
-   value. On a 280-entry corpus this took ten batches of 28 entries, each
-   delegated to a Sonnet subagent that read the first 60–80 lines of every
-   entry, with a machine check after each batch (every entry has the field,
-   the shared parser reads it, length in range, no `"` inside). Put the rules
-   and five good examples in one file and hand that file to each batch.
-3. Label the links: every `- see:` / `ref:` / `amends:` / `extends:` line
-   ends with `— why to follow it`, on the same line (the lint reads one line
-   at a time; a label wrapped onto the next line counts as missing).
-   `amends:` / `extends:` targets must link back, or be superseded by the
-   entry.
-4. Re-run the lint with `--schema 2` until it is clean, then declare
-   `schema_version: 2` in `.claude/knowledge/CLAUDE.md`. From then on the
-   checks are enforced, including by the post-write hook on every save.
+Until you do, the lint still lists what the new rules would report, but
+under a heading marked *advisory*, and the exit code stays 0. A pre-commit
+hook therefore keeps passing after an update. When you want to try the new
+rules before committing to them, run `kb_graph.py --schema 2 lint`.
 
-A pre-commit hook wired as in [link-graph.md](link-graph.md) keeps passing
-throughout: advisory findings do not change the exit code until the
-declaration is raised.
+## 1.26: descriptions and link labels
 
-Note for corpora edited with the redact hook active: a bulk edit passes every
-entry through `postwrite_redact_entries.py`, which is also a chance for it to
-catch secrets that were already in the body (it did, on the reference corpus:
-a raw 1Password item id and a personal e-mail address). It can also
-over-match e-mail-shaped strings such as systemd unit names
-(`app-…@autostart.service`) or placeholder SSH URLs; restore those with a
-shell edit, not with the Edit tool, or the hook fires again.
+### What changed
 
-## 1.24.0 — one frontmatter parser, list-form `tags`, `status` default
+An entry can now say when it should be opened. That sentence lives in the
+frontmatter as `description:`. Search results and the automatic suggestions
+at the start of a prompt show it, so you, or Claude, can pick the right
+entry without opening several. Entries without a description keep working;
+the first paragraph of the body is shown instead, marked `(lead)`.
 
-Every reader (index, search, graph CLI, prompt hook) now uses the same
-parser. Two things change for existing entries, neither needs a rewrite:
+Links between entries (`- see:`, `- ref:`, `- amends:`, `- extends:`) are
+expected to end with a short reason, after the link, on the same line:
 
-- `tags:` written as a YAML list is now read everywhere; before, a list was
-  silently parsed as *no tags* by the scripts. The list is the documented
-  form for new entries. The single-line `tags: "#a #b"` form remains fully
-  supported — do not bulk-rewrite old entries.
-- A missing or blank `status:` means `active` in `kb_search.py` /
-  `kb_index.py` too (the prompt hook already did this). Entries without a
-  status now appear under `--status active` instead of being dropped.
-- Tags starting with a digit (e.g. `#1password`) are now recognised; if you
-  had worked around this, the workaround can go.
+```markdown
+- see: [Plugin cache is keyed by version](2026/08/20260811-171510-alice-plugin-cache.md) — why a merged fix did not reach users
+```
+
+Two new rules go with this: every entry has a description of 80 to 320
+characters, and every link has a reason. Both belong to rule version 2, so
+they are advisory until you declare `schema_version: 2`. Entries you create
+with `/record-knowledge` already follow both.
+
+### What you will notice after the update
+
+- `kb_graph.py lint` prints an *advisory* block listing entries without a
+  description and links without a reason. The exit code does not change.
+- When Claude edits an old entry, a one-line notice says that the checks are
+  not enforced yet.
+
+### If you want to adopt the new rules
+
+1. See how much work there is:
+
+   ```bash
+   python3 scripts/kb_graph.py --root .claude/knowledge/entries --schema 2 lint
+   ```
+
+   Each entry that would fail is listed with the reason.
+
+2. Give each entry a description. Write the situations in which someone
+   should open it: the symptom they see, the question they have, or the
+   decision they are about to make. Put the most common situation first,
+   since search results show only the first 80 characters. Do not restate
+   the title; the title already gives the answer.
+
+   ```yaml
+   # Before
+   title: Plugin cache is keyed by version
+
+   # After
+   title: Plugin cache is keyed by version
+   description: "Open when a plugin fix merged to main does not reach users, when /plugin update says already at the latest version yet the old behaviour persists, or when deciding whether a fix PR must carry the version bump."
+   ```
+
+   If you have many entries, ask Claude to do this in batches of 20 to 30.
+   Put the rules above and a few good examples in one file and hand it to
+   each batch; afterwards run the command from step 1 to check.
+
+3. Add a reason to every link that lacks one. Keep it on the same line as
+   the link; the lint reads one line at a time.
+
+4. When step 1 reports nothing, write `schema_version: 2` at the top of
+   `.claude/knowledge/CLAUDE.md`. From now on the two rules are enforced,
+   including right after Claude saves an entry.
+
+One caution for batch edits: if the redact hook is enabled, every edited
+entry passes through it. That can be useful, since it also catches secrets
+that were already in old entries, but it sometimes masks harmless text that
+looks like an e-mail address (a systemd unit name such as
+`app-foo@autostart.service`, or an SSH URL). If that happens, restore the
+text with a shell command rather than with the Edit tool, because the Edit
+tool triggers the hook again.
+
+## 1.24: tags and status
+
+All parts of ccmemo now read the frontmatter with the same parser. Nothing
+needs rewriting, but two things behave differently:
+
+- `tags:` written as a list, one `"#tag"` per line, is now understood by the
+  search scripts. Before 1.24 they silently treated such a list as no tags.
+  The list is the recommended form for new entries; the one-line form
+  `tags: "#a #b"` keeps working, so leave old entries as they are.
+- An entry with no `status:` line now counts as `active` everywhere. Before
+  1.24 the search scripts left such entries out of `--status active`.
+- Tags that start with a digit, such as `#1password`, are now recognised.
