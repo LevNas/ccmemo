@@ -71,11 +71,29 @@ def main() -> None:
     if not findings:
         return
 
-    lines = [f"  - {f['check']}: {f['detail']}" for f in findings[:MAX_FINDINGS_SHOWN]]
-    if len(findings) > MAX_FINDINGS_SHOWN:
-        lines.append(f"  - … {len(findings) - MAX_FINDINGS_SHOWN} more")
+    # Checks the corpus has not opted into yet (schema_version below the
+    # check's version) come back as advisory: mention them in one line
+    # instead of listing them, so an old corpus is nudged, not nagged.
+    enforced = [f for f in findings if f.get("severity", "error") != "advisory"]
+    advisory = [f for f in findings if f.get("severity", "error") == "advisory"]
+    name = os.path.basename(file_path)
+    if not enforced:
+        reason = (
+            f"[ccmemo] kb_graph lint ({name}): {len(advisory)} advisory — "
+            "description / link-label checks are not enforced for this knowledge base yet "
+            "(declare `schema_version: 2` in .claude/knowledge/CLAUDE.md once migrated; "
+            "see docs/upgrading.md)."
+        )
+        json.dump({"decision": "warn", "reason": reason}, sys.stdout, ensure_ascii=False)
+        return
+
+    lines = [f"  - {f['check']}: {f['detail']}" for f in enforced[:MAX_FINDINGS_SHOWN]]
+    if len(enforced) > MAX_FINDINGS_SHOWN:
+        lines.append(f"  - … {len(enforced) - MAX_FINDINGS_SHOWN} more")
+    if advisory:
+        lines.append(f"  - (+{len(advisory)} advisory, not enforced at this schema_version)")
     reason = (
-        f"[ccmemo] kb_graph lint ({os.path.basename(file_path)}): {len(findings)} finding(s)\n"
+        f"[ccmemo] kb_graph lint ({name}): {len(enforced)} finding(s)\n"
         + "\n".join(lines)
         + "\n今のうちに修正してください（description はトリガー条件、リンクには「— なぜ辿るか」のラベル、"
         "amends/extends は相手側からの逆リンク）。検査の一覧: docs/link-graph.md の lint 節。"

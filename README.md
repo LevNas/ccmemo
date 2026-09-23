@@ -116,6 +116,9 @@ All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md
   verification (incl. corporate TLS and NixOS)
 - [docs/link-graph.md](docs/link-graph.md) — the link-graph CLI:
   `stats` / `neighborhood` / `path` / `lineage` / `link-add` / `lint`
+- [docs/upgrading.md](docs/upgrading.md) — moving an existing knowledge base
+  to a newer ccmemo: what upgrades silently, the `schema_version` declaration,
+  and the migration steps per release
 - [docs/architecture.md](docs/architecture.md) — scripts & skill wiring, subagent
   delegation, Context Guard
 - [docs/examples.md](docs/examples.md) — personal & team workflow walkthroughs
