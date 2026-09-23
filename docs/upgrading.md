@@ -19,9 +19,10 @@ choose to. Most updates need nothing from you.
 
 | You are updating from | What to read |
 |---|---|
-| 1.26.0 or later | Nothing to do. |
-| 1.25.x or 1.24.x | [1.26: descriptions and link labels](#126-descriptions-and-link-labels). Optional work; nothing breaks if you skip it. |
-| 1.23.x or older | The section above, plus [1.24: tags and status](#124-tags-and-status). No work needed there, but two behaviours change. |
+| 1.27.0 or later | Nothing to do. |
+| 1.26.x | [1.27: entry ids and verification](#127-entry-ids-and-verification). One command plus one line; nothing breaks if you skip it. |
+| 1.25.x or 1.24.x | The section above, plus [1.26: descriptions and link labels](#126-descriptions-and-link-labels). Optional work; nothing breaks if you skip it. |
+| 1.23.x or older | Both sections above, plus [1.24: tags and status](#124-tags-and-status). No work needed there, but two behaviours change. |
 
 ## What happens on its own
 
@@ -50,6 +51,93 @@ Until you do, the lint still lists what the new rules would report, but
 under a heading marked *advisory*, and the exit code stays 0. A pre-commit
 hook therefore keeps passing after an update. When you want to try the new
 rules before committing to them, run `kb_graph.py --schema 2 lint`.
+
+## 1.27: entry ids and verification
+
+### What changed
+
+Every entry now carries an **id**, a random identifier written once in its
+frontmatter (`id:`). The filename still says when the entry was created and
+what it is about; the id says *which* entry it is, so renaming a file or
+copying it into another knowledge base no longer loses track of it.
+`kb_graph.py rename` changes a slug and rewrites every link to it;
+`kb_graph.py relink` repairs links after a file was moved by hand.
+
+Every entry also records **who wrote it and who checked it**, separately.
+`generated:` names the writer (a person, Claude, or a process) and the time;
+`verified:` is a list of independent checks, added with
+`kb_graph.py verify`, never by hand. Search shows a checked entry with
+`[human]` or `[machine]` after its title and can filter on it
+(`--verified human`). The old `confidence:` field is retired: the writer's
+own rating never counted as a check. You do not need to delete it.
+
+These are the rules of **schema version 3**. Until you declare
+`schema_version: 3`, the two new lint checks (`missing-id`,
+`missing-generated`) are advisory. Entries created with `/record-knowledge`
+carry both fields from the start.
+
+### What you will notice after the update
+
+- `kb_graph.py lint` lists every entry without an id or a `generated:` block
+  under the advisory heading. The exit code does not change.
+- After Claude edits an old entry, a one-line notice says those checks are
+  not enforced yet.
+- Nothing in search output changes until an entry has been verified.
+
+### If you want to adopt the new rules
+
+1. Add the two fields to every entry. One command does it, and running it
+   again changes nothing:
+
+   ```bash
+   python3 scripts/kb_graph.py --root .claude/knowledge/entries migrate --to 3 --tz +09:00
+   ```
+
+   `--tz` is the time zone your entries were written in; it is only used to
+   turn each filename's date-time into `generated.at`. Every entry gets an
+   `id` and a `generated` block naming `claude-code` as the writer (pass
+   `--by human:<handle>` if you wrote them yourself). Nothing else in the
+   file is touched, and no entry is marked verified: nobody has checked the
+   old ones yet, and the point of the field is to say so honestly.
+
+   ```yaml
+   # Before
+   title: Plugin cache is keyed by version
+   author: "@alice"
+   created: 2026-08-11
+
+   # After
+   title: Plugin cache is keyed by version
+   id: 1887fedb-0afd-479e-98ef-e02b80b1fb00
+   author: "@alice"
+   created: 2026-08-11
+   generated:
+     by: claude-code
+     at: 2026-08-11T17:15:10+09:00
+   ```
+
+2. Write `schema_version: 3` at the top of `.claude/knowledge/CLAUDE.md`
+   (replace the `2`). From now on the id and writer fields are required,
+   including right after Claude saves an entry.
+
+3. Run the lint and confirm it reports 0 findings:
+
+   ```bash
+   python3 scripts/kb_graph.py --root .claude/knowledge/entries lint
+   ```
+
+4. Commit the changed entries.
+
+Two things to know afterwards. Because every entry's text changed, the next
+search re-embeds the whole knowledge base once; on a few hundred entries that
+takes from under a minute to a few minutes depending on the machine, so you
+may prefer to run
+`uv run scripts/kb_index.py .claude/knowledge/entries` yourself first. And
+when you have actually checked an entry — read it and confirmed it still
+holds — record that with
+`python3 scripts/kb_graph.py --root .claude/knowledge/entries verify <entry> --by human:<handle>`;
+`/review-knowledge` does the same for entries confirmed during a review.
+A passing lint is not a check and is never recorded as one.
 
 ## 1.26: descriptions and link labels
 

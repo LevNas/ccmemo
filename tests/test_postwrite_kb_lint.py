@@ -30,6 +30,11 @@ def run_hook(tool_name, file_path):
     return proc.returncode, proc.stdout
 
 
+# Schema-3 identity + trust lines for fixtures that must lint clean.
+S3 = ("id: 6f1c2a4e-0d3b-4c5e-9a7f-1b2c3d4e5f60\n"
+      "generated:\n  by: human:alice\n  at: 2026-07-04T10:00:00+09:00\n")
+
+
 def make_repo(base, schema=None):
     root = os.path.join(base, "repo", ".claude", "knowledge", "entries", "2026", "07")
     os.makedirs(root)
@@ -45,7 +50,7 @@ def test_findings_reported_as_warning():
         root = make_repo(base, schema=2)
         path = os.path.join(root, "20260704-100000-alice-bad.md")
         with open(path, "w", encoding="utf-8") as f:
-            f.write('---\ntitle: Bad\ntags: "#pitfall"\n---\n\n- see: [x](2026/07/nope.md)\n')
+            f.write('---\ntitle: Bad\ntags: "#pitfall"\n' + S3 + '---\n\n- see: [x](2026/07/nope.md)\n')
         code, out = run_hook("Write", path)
         check("exit 0", code == 0, code)
         data = json.loads(out)
@@ -67,8 +72,8 @@ def test_undeclared_corpus_gets_one_line_advisory():
         data = json.loads(out)
         reason = data.get("reason", "")
         check("advisory-only: warn with one line", data.get("decision") == "warn"
-              and reason.count("\n") == 0 and "1 advisory" in reason, reason)
-        check("advisory-only: names the declaration", "schema_version: 2" in reason, reason)
+              and reason.count("\n") == 0 and "3 advisory" in reason, reason)
+        check("advisory-only: names the declaration", "schema_version" in reason, reason)
         # an enforced finding plus advisory ones: list + count tail
         with open(path, "a", encoding="utf-8") as f:
             f.write("- see: [x](2026/07/nope.md)\n")
@@ -76,7 +81,7 @@ def test_undeclared_corpus_gets_one_line_advisory():
         reason = json.loads(out).get("reason", "")
         check("mixed: enforced listed", "broken-link" in reason, reason)
         check("mixed: advisory counted, not listed",
-              "+2 advisory" in reason and "missing-description:" not in reason, reason)
+              "+4 advisory" in reason and "missing-description:" not in reason, reason)
 
 
 def test_clean_entry_is_silent():
@@ -84,7 +89,7 @@ def test_clean_entry_is_silent():
         root = make_repo(base)
         path = os.path.join(root, "20260704-100000-alice-good.md")
         with open(path, "w", encoding="utf-8") as f:
-            f.write('---\ntitle: Good\ntags: "#pitfall"\n'
+            f.write('---\ntitle: Good\ntags: "#pitfall"\n' + S3 +
                     'description: "Open when the post-write lint hook needs a clean fixture '
                     'whose trigger condition is long enough."\n---\n\nFine.\n')
         code, out = run_hook("Edit", path)

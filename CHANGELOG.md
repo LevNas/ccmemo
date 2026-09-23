@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.27.0] - 2026-09-24
+
+### Added
+- **Schema version 3** of the entry format, designed as one bundle in the
+  consumer's ADR (2026-09-23): a path-independent entry `id` (uuid4) and the
+  OKF-style trust family `generated: {by, at}` (required) / `verified:
+  [{by, at}]` (append-only) / `stale_after:` (optional). Actors are
+  `human:<handle>`, `claude-code[/<model-id>]` or `process:<name>`. The
+  trust tier (unverified / machine / human) is derived from `verified`
+  only; an event older than `generated.at` is expired. `confidence:` is
+  retired — still parsed, used by nothing, dropped from the templates.
+  `hooks/lib/trust.py` holds the grammar, the derivation and the line-level
+  frontmatter edits the commands below use.
+- `kb_graph.py migrate --to 3`: idempotent; inserts `id` and `generated`
+  where missing (`at` from the filename's date-time in `--tz`), touches
+  nothing else, never backfills `verified`.
+- `kb_graph.py verify <entry> --by <actor> [--at]`: appends one verified
+  event deterministically and prints the resulting tier.
+- `kb_graph.py rename <entry> <new-slug>`: slug only (prefix, author
+  segment and directory stay); rewrites every link and `superseded_by:`
+  that resolves to the entry, keeping each link's style.
+- `kb_graph.py relink`: repairs links to paths the index recorded as
+  moved. `kb_index.py` now detects a move (known `id` at a new relpath,
+  old file gone), re-keys the rows without re-embedding and records the
+  pair in a `moves` table.
+- lint: `missing-id`, `duplicate-id`, `missing-generated`, `invalid-actor`
+  (enforced from `schema_version: 3`, advisory below); `verification-expired`,
+  `stale-after-passed`, `duplicate-title` (informational at every schema,
+  printed under their own heading, never fail the lint).
+- index (schema 4, metadata-only upgrade): `entries.id`, `generated_by`,
+  `generated_at`, `verified_tier`, `verified_at`.
+- search: `[human]` / `[machine]` tier marker after the title in `--summary`
+  and ranked output (nothing when unverified); opt-in `--verified
+  {machine,human}` filter (never affects ranking); `--json` carries `id`,
+  `generated`, `verified_tier`, `verified_at`. The `id` is not printed in
+  `--summary` (byte budget).
+- `docs/upgrading.md` / `upgrading.ja.md`: a 1.27 section — do I need to do
+  anything, then `migrate --to 3` → `schema_version: 3` → `lint`.
+
+### Changed
+- `/record-knowledge` template and procedure emit `id` and `generated`,
+  document the actor grammar and when `generated` is updated; the scaffolded
+  KB `CLAUDE.md` declares `schema_version: 3` and replaces the Confidence
+  section with Trust. `/review-knowledge` `fix` mode records confirmed
+  entries with `verify` (never lint passing). `/recall-knowledge` explains
+  the tier marker and `--verified`.
+- The prompt-injection hook is unchanged (no latency or format regression).
+- `hooks/postwrite_kb_lint.py`: the advisory-only notice names the checks
+  and no longer hard-codes schema 2.
+
+Upgrade notes: [docs/upgrading.md](docs/upgrading.md#127-entry-ids-and-verification).
+
 ## [1.26.2] - 2026-09-24
 
 ### Fixed

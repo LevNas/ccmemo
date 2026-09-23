@@ -77,8 +77,10 @@ uv run scripts/kb_search.py ~/proj/.claude/knowledge/entries/ "トークン注�
 ```
 
 Filters: `--status`, `--tag` (repeatable), `--type`, `--created-from`,
-`--created-to`. Other flags: `--top N`, `--summary`, `--edges N`,
-`--linked-from N`, `--json`, `--no-lazy`, `--no-mecab`.
+`--created-to`, `--verified machine|human` (only hits whose latest
+independent check is at least that tier; opt-in, never affects ranking).
+Other flags: `--top N`, `--summary`, `--edges N`, `--linked-from N`,
+`--json`, `--no-lazy`, `--no-mecab`.
 
 Pipeline: lexical rank (rg + mecab) and vector rank (sqlite-vec KNN) are each
 ranked, fused with **RRF (k=60)**, the top hits are **expanded one hop along
@@ -110,7 +112,11 @@ link carries — in the OKF `index.md` shape:
   printed handle is always a valid unique substring for `kb_graph.py
   neighborhood <handle>` and for a file glob `*/<handle>*`. `(+N)` counts edges not
   shown. Entries without a `description` fall back to their lead paragraph,
-  marked `(lead)`. A non-active status is flagged, e.g. `(superseded)`.
+  marked `(lead)`. A non-active status is flagged, e.g. `(superseded)`. A
+  verified hit carries its trust tier as one word after the title —
+  `[human]` or `[machine]`, from the latest `verified` event that is not
+  older than `generated.at`; unverified hits (most of a corpus) carry nothing.
+  The entry `id` is not printed (byte budget); `--json` has it.
 - Byte budget: on a 288-entry Japanese KB ten summaries with the defaults
   (`--edges 3 --linked-from 0`) measure ~6.9 KB — under one entry body.
   `--linked-from 1` adds the newest incoming link per hit (~90 bytes each);
@@ -120,14 +126,23 @@ link carries — in the OKF `index.md` shape:
   lists every leaf.
 - `--json` carries the same fields uncapped by the text caps: `description`,
   `description_source` (`frontmatter` | `lead`), `edges` / `linked_from`
-  (each with `target`/`source`, `rel`, `label`, `title`) and the totals.
+  (each with `target`/`source`, `rel`, `label`, `title`, `handle`) and the
+  totals, plus the identity and trust fields `id`, `generated` (`{by, at}` or
+  null), `verified_tier` (`""` | `machine` | `human`) and `verified_at`.
 
 The edges come from the index (`edges` table: `src`, `target`, `rel`,
 `label`, `ord`), extracted by `hooks/lib/edges.py` from the `- see:`-style
 bullets in the body or from a frontmatter `related_docs:` list (design-document
 corpora). An index built before this table existed is upgraded in place on
 the next search — metadata and edges are re-read from the Markdown, nothing
-is re-embedded.
+is re-embedded. The same metadata-only upgrade adds the schema-3 columns
+(`id`, `generated_by`, `generated_at`, `verified_tier`, `verified_at`).
+
+The index also tracks **moves**: when a re-index finds a known `id` at a new
+relpath while the old file is gone, the rows are re-keyed (embeddings kept)
+and the old → new pair is written to a `moves` table, which
+`kb_graph.py relink` reads to repair links that still point at the old path.
+Copies (same `id`, old file still present) are not moves.
 
 ### Replaying search misses (`kb_recall_eval.py`)
 

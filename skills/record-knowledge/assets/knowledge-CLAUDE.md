@@ -1,5 +1,5 @@
 ---
-schema_version: 2   # ccmemo conventions this knowledge base commits to (see docs/upgrading.md)
+schema_version: 3   # ccmemo conventions this knowledge base commits to (see docs/upgrading.md)
 ---
 
 # Knowledge Base
@@ -66,10 +66,13 @@ Non-active entries carry a body-top warning banner so direct readers see the sta
 | `fragment` | Isolated observation, not yet promoted |
 | `synthesis` | Cross-cutting insight from multiple entries |
 
-### Confidence
-- `low` — observed once, unverified
-- `mid` — partially verified
-- `high` — well-established fact
+### Trust
+- `generated: {by, at}` — who wrote the body and when (required). Actors: `human:<handle>`,
+  `claude-code[/<model-id>]`, `process:<name>`
+- `verified: [{by, at}]` — independent checks, appended with `kb_graph.py verify`; the
+  latest event decides the tier (`[human]` / `[machine]` in search). Nothing is verified
+  until someone checks it; lint passing does not count
+- `stale_after: <date>` — optional explicit expiry
 
 ## Rules
 
@@ -84,4 +87,6 @@ Non-active entries carry a body-top warning banner so direct readers see the sta
   summary; the title already states the conclusion
 - Every link line carries a label after the link (`— why to follow it`); `amends:` /
   `extends:` targets must link back. `kb_graph.py lint` checks this on every save
+- `id:` (uuid4) and `generated:` are required; `id` is the entry's identity across renames
+  (`kb_graph.py rename` keeps it and rewrites links) and is never used in a link
 - See `/record-knowledge` skill for full details

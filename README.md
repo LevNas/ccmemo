@@ -115,7 +115,8 @@ All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md
 - [docs/hybrid-search.md](docs/hybrid-search.md) — semantic search setup &
   verification (incl. corporate TLS and NixOS)
 - [docs/link-graph.md](docs/link-graph.md) — the link-graph CLI:
-  `stats` / `neighborhood` / `path` / `lineage` / `link-add` / `lint`
+  `stats` / `neighborhood` / `path` / `lineage` / `link-add` / `supersede` /
+  `lint` / `migrate` / `verify` / `rename` / `relink`
 - [docs/upgrading.md](docs/upgrading.md) — moving an existing knowledge base
   to a newer ccmemo: what upgrades silently, the `schema_version` declaration,
   and the migration steps per release ([日本語](docs/upgrading.ja.md))

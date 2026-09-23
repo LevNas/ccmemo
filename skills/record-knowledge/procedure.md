@@ -42,6 +42,16 @@ cp assets/knowledge-CLAUDE.md .claude/knowledge/CLAUDE.md
    Example: `description: "Open when a plugin fix merged to main does not reach users,
    when /plugin update says already at the latest version yet the old behaviour persists,
    or when deciding whether a fix PR must carry the version bump."`
+6. Every entry carries `id:` and `generated:` — **required** at schema 3, checked by
+   `kb_graph.py lint` (`missing-id`, `missing-generated`, `invalid-actor`) and the post-write
+   hook. `id` is a uuid4 (`python3 -c 'import uuid; print(uuid.uuid4())'`): the entry's
+   identity across renames and copies — never reuse one, never put it in a link.
+   `generated` records who wrote the body and when: `by: claude-code/<model-id>` when you
+   write it (plain `claude-code` if the model id is unknown), `by: human:<handle>` only when
+   the user dictated the text; `at:` is ISO 8601 with an offset. Update `generated` when a
+   later edit changes what the entry claims (a rewrite); leave it alone for link lines,
+   banners, typos and reinforcement — it resets the entry's verification (see Trust below).
+   Never write `verified:` yourself; that is `kb_graph.py verify`'s job after a real check.
 
 ## Entry Location
 - `.claude/knowledge/entries/YYYY/MM/YYYYMMDD-HHMMSS-author-slug.md` — one file per entry, organized by year/month
@@ -55,12 +65,16 @@ cp assets/knowledge-CLAUDE.md .claude/knowledge/CLAUDE.md
 ```markdown
 ---
 title: <title>
+id: <uuid4>
 author: "@<username>"
 created: YYYY-MM-DD
+generated:
+  by: claude-code/<model-id>        # who wrote the body: human:<handle> | claude-code[/<model-id>] | process:<name>
+  at: YYYY-MM-DDTHH:MM:SS+HH:MM     # when (ISO 8601 with offset)
 status: draft | active | superseded | deprecated
 type: knowledge | overview | detail | fragment | synthesis
-confidence: low | mid | high
 superseded_by: YYYY/MM/newer-entry-slug.md   # only when status: superseded
+stale_after: YYYY-MM-DD                      # optional: explicit expiry (environment-specific facts)
 tags:
   - "#tag1"
   - "#tag2"
@@ -78,6 +92,8 @@ description: "<trigger condition — WHEN to open this entry, not what it says>"
 - `tags:` is a YAML list, one quoted `"#tag"` per line (the older single-line string
   form is still accepted by every reader — never bulk-rewrite existing entries)
 - `status:` may be omitted; readers treat a missing or blank status as `active`
+- `verified:` (a list of `{by, at}` events) is appended by `kb_graph.py verify`, never by
+  hand. `confidence:` is retired: still parsed, used by nothing, not written for new entries
 - Titles may contain `: ` unquoted; the parser keeps the whole remainder as the title
 
 - Keep entries focused and under **100 KB** where possible
@@ -145,13 +161,26 @@ Two typed list links carry lineage semantics that plain `see:` does not; `kb_gra
 | `superseded` | Replaced by a newer entry — follow `superseded_by` link |
 | `deprecated` | Obsolete, no longer relevant |
 
-### Confidence Levels
+### Trust (generated / verified)
 
-| Level | Meaning |
+Who wrote an entry and who checked it are recorded separately; the writer never rates
+their own work (that is why `confidence:` was retired).
+
+| Field | Meaning |
 |-------|---------|
-| `low` | Observed once, not yet reproduced |
-| `mid` | Reproduced or confirmed in some contexts |
-| `high` | Verified multiple times, well-established |
+| `generated: {by, at}` | The actor that last wrote or meaningfully rewrote the body, and when. Required |
+| `verified: [{by, at}, …]` | Independent checks of the content, append-only. Written by `kb_graph.py verify <entry> --by <actor>` |
+| `stale_after: <date>` | Optional explicit expiry; lint reports `stale-after-passed` once it is behind |
+
+Actors: `human:<handle>` (the `author` value without `@`), `claude-code[/<model-id>]`,
+`process:<name>` (a deterministic gate, e.g. `process:ccreview-gate`).
+
+The **trust tier** is derived from `verified` only: *unverified* (no event — where every
+entry starts), *machine* (latest verifier is `claude-code…` or `process:…`), *human*
+(latest verifier is `human:…`). An event older than `generated.at` is expired — rewriting
+the body resets verification (`verification-expired` in lint). Search shows the tier as
+`[human]` / `[machine]` and filters on it (`--verified`), but never ranks by it. `status` is
+the lifecycle and stays orthogonal. **Lint passing is not verification** — never record it.
 
 ### Change Flow (supersede)
 
@@ -194,7 +223,7 @@ Entries are **mutable** — in-place editing is the default, and git tracks hist
 | Change | Old still current? | Action |
 |--------|--------------------|--------|
 | Correction — typos, broken links, wording | yes | Edit in place |
-| Reinforcement — sources/examples added; conclusion and confidence unchanged | yes | Edit in place |
+| Reinforcement — sources/examples added; conclusion unchanged (`generated` unchanged) | yes | Edit in place |
 | Partial correction / addendum note on the target | yes | New entry + `- amends:` link; old stays `active` |
 | Elaboration / specialization building on the target | yes | New entry + `- extends:` link; old stays `active` |
 | Evolution / replacement — conclusion, policy, or understanding updated | **no** | New entry + Change Flow (supersede) above |

@@ -68,6 +68,7 @@ from pathlib import Path
 # Import the sibling indexer module regardless of cwd.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kb_index as kbi  # noqa: E402
+from lib import trust as _trust  # noqa: E402  (hooks/lib, on sys.path via kb_index)
 
 RRF_K = 60
 SNIPPET_CHARS = 160
@@ -264,13 +265,18 @@ def _entry_meta(root: Path) -> dict[str, dict]:
         return meta
     conn = kbi.connect(db_path)
     kbi.init_schema(conn)
-    for relpath, title, tags, status, created, etype, description, handle in conn.execute(
-        "SELECT relpath, title, tags, status, created, type, description, handle "
-        "FROM entries"
+    for (relpath, title, tags, status, created, etype, description, handle,
+         eid, gen_by, gen_at, tier, tier_at) in conn.execute(
+        "SELECT relpath, title, tags, status, created, type, description, handle, "
+        "id, generated_by, generated_at, verified_tier, verified_at FROM entries"
     ):
         meta[relpath] = {
             "title": title,
             "handle": handle or entry_id(relpath),
+            "id": eid or "",
+            "generated": {"by": gen_by, "at": gen_at} if gen_by else None,
+            "verified_tier": tier or "",
+            "verified_at": tier_at or "",
             "tags": json.loads(tags) if tags else [],
             "status": status,
             "created": created,
@@ -327,8 +333,11 @@ def entry_edges(root: Path, relpaths: list[str], meta: dict[str, dict], *,
     return out
 
 
-def apply_filters(meta: dict, *, status, tags, etype, created_from, created_to) -> bool:
+def apply_filters(meta: dict, *, status, tags, etype, created_from, created_to,
+                  verified_min: str = "") -> bool:
     if status and meta.get("status") != status:
+        return False
+    if verified_min and not _trust.tier_at_least(meta.get("verified_tier", ""), verified_min):
         return False
     if etype and meta.get("type") != etype:
         return False
@@ -399,7 +408,8 @@ def make_snippet(path: Path, query: str) -> str:
 def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
            status, tags, etype, created_from, created_to,
            max_edges: int = DEFAULT_EDGES,
-           max_linked_from: int = DEFAULT_LINKED_FROM) -> list[dict]:
+           max_linked_from: int = DEFAULT_LINKED_FROM,
+           verified_min: str = "") -> list[dict]:
     if lazy:
         stale = kbi.detect_stale(root)
         if stale:
@@ -424,6 +434,7 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
         if not apply_filters(
             m, status=status, tags=tags, etype=etype,
             created_from=created_from, created_to=created_to,
+            verified_min=verified_min,
         ):
             continue
         description = m.get("description", "")
@@ -435,12 +446,16 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
                 "path": str(root / relpath),
                 "relpath": relpath,
                 "handle": m.get("handle") or entry_id(relpath),
+                "id": m.get("id", ""),
                 "title": m.get("title", relpath),
                 "score": round(score, 5),
                 "status": m.get("status", ""),
                 "tags": m.get("tags", []),
                 "description": description,
                 "description_source": source,
+                "generated": m.get("generated"),
+                "verified_tier": m.get("verified_tier", ""),
+                "verified_at": m.get("verified_at", ""),
                 "snippet": make_snippet(root / relpath, query),
             }
         )
@@ -505,7 +520,9 @@ def format_summary(results: list[dict]) -> str:
     one — rather than by their (long) title. The description falls back to the
     entry's lead paragraph, marked `(lead)`, when the entry has none (entries
     written before the field existed). Non-active status is flagged inline so
-    a superseded hit is never picked by mistake.
+    a superseded hit is never picked by mistake. A verified hit carries its
+    trust tier as one word — `[human]` or `[machine]` — after the title;
+    unverified hits carry nothing (the tier never affects ranking).
     """
     if not results:
         return "(no hits)"
@@ -515,7 +532,8 @@ def format_summary(results: list[dict]) -> str:
         if r.get("description_source", "frontmatter") != "frontmatter" and desc:
             desc = "(lead) " + desc
         flag = "" if r.get("status") in ("", "active") else f" ({r['status']})"
-        lines.append(f"* [{_trunc(r['title'], SUMMARY_TITLE_CHARS)}]({r['relpath']}){flag}"
+        tier = f" [{r['verified_tier']}]" if r.get("verified_tier") else ""
+        lines.append(f"* [{_trunc(r['title'], SUMMARY_TITLE_CHARS)}]({r['relpath']}){flag}{tier}"
                      f" - {_trunc(desc, SUMMARY_DESC_CHARS)}")
         shown = r.get("edges", [])
         for e in shown:
@@ -541,7 +559,8 @@ def format_ranked(results: list[dict]) -> str:
         return "(no hits)"
     lines: list[str] = []
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. [{r['score']}] {r['title']}")
+        tier = f" [{r['verified_tier']}]" if r.get("verified_tier") else ""
+        lines.append(f"{i}. [{r['score']}] {r['title']}{tier}")
         lines.append(f"   {r['relpath']}  ({r['status']}) {' '.join(r['tags'][:6])}")
         if r.get("description") and r.get("description_source", "frontmatter") == "frontmatter":
             lines.append(f"   when: {_trunc(r['description'], SUMMARY_DESC_CHARS)}")
@@ -559,6 +578,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--type", dest="etype")
     ap.add_argument("--created-from")
     ap.add_argument("--created-to")
+    ap.add_argument("--verified", choices=["machine", "human"], default="", dest="verified_min",
+                    help="only hits verified at least at this tier (machine: an agent or a "
+                         "process checked it; human: a person did); never affects ranking")
     ap.add_argument("--top", type=int, default=8)
     ap.add_argument("--summary", action="store_true",
                     help="neighbourhood summary: title / description / typed edges per hit")
@@ -588,6 +610,7 @@ def main(argv: list[str]) -> int:
         created_to=args.created_to,
         max_edges=args.edges,
         max_linked_from=args.linked_from,
+        verified_min=args.verified_min,
     )
 
     if args.json:
