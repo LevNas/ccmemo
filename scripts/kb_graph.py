@@ -1209,10 +1209,17 @@ def cmd_rename(root, nodes, args):
     m = _DATED_NAME_RE.match(base)
     if not m:
         sys.exit(f"error: {nid} is not named <date>-<time>-<author>-<slug>.md; rename by hand")
+    prefix = m.group(1)
+    # The author segment may itself contain hyphens (`lev-nas`): when the
+    # frontmatter names the author, trust it over the first-hyphen split.
+    author = _trust.human_actor(parse_frontmatter(_read_text(os.path.join(root_abs, nid))).get("author"))
+    handle = author[len("human:"):] if author else ""
+    if handle and base.startswith(f"{base[:15]}-{handle}-"):
+        prefix = f"{base[:15]}-{handle}"
     slug = args.new_slug.strip()
     if not _SLUG_RE.match(slug):
         sys.exit(f"error: slug must be kebab-case [a-z0-9-] (got {slug!r})")
-    new_base = f"{m.group(1)}-{slug}.md"
+    new_base = f"{prefix}-{slug}.md"
     if new_base == base:
         print(f"already named: {nid}")
         return

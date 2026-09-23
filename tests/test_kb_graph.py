@@ -888,6 +888,23 @@ def test_schema3_rename_changes_slug_only_and_rewrites_links():
         assert run_cli(root, "rename", "notes", "x").returncode != 0  # not a dated name
 
 
+def test_schema3_rename_keeps_hyphenated_author_segment():
+    with tempfile.TemporaryDirectory() as base:
+        root = make_kb(base)
+        rel = "2026/07/20260701-150000-lev-nas-topic-x.md"
+        with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+            f.write('---\ntitle: Hyphenated author\nauthor: "@lev-nas"\ncreated: 2026-07-01\n---\n\nx\n')
+        res = run_cli(root, "rename", "lev-nas-topic-x", "topic-y")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        assert os.path.exists(os.path.join(root, "2026/07/20260701-150000-lev-nas-topic-y.md")), os.listdir(os.path.join(root, "2026/07"))
+        # without an author: field the first-hyphen split is all there is
+        rel2 = "2026/07/20260701-160000-solo-topic-z.md"
+        with open(os.path.join(root, rel2), "w", encoding="utf-8") as f:
+            f.write("---\ntitle: No author\n---\n\nx\n")
+        res = run_cli(root, "rename", "solo-topic-z", "topic-w")
+        assert res.returncode == 0 and os.path.exists(os.path.join(root, "2026/07/20260701-160000-solo-topic-w.md")), res.stderr
+
+
 def test_schema3_relink_repairs_links_recorded_as_moves():
     import sqlite3
     with tempfile.TemporaryDirectory() as base:
