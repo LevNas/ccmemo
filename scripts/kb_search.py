@@ -30,7 +30,16 @@ context than one entry body.
 
 Lazy refresh: before searching, on-disk sha256 hashes are compared with the index;
 any entry that changed (or is new) is re-embedded just-in-time so results never go
-stale. Disable with --no-lazy.
+stale. Disable with --no-lazy. From a linked git worktree the index of the main
+checkout is used read-only: no refresh happens there, and a one-line warning
+names the files the index is behind on.
+
+Multi-corpus (1.28): with `scope: repo` in `.claude/ccmemo.json` the index
+covers every document in the repository, each with a `kind` (`kb` for the
+knowledge base, `docs` for the rest, or what the repository's `corpora`
+rules declare). Every hit carries a `[kind]` badge; `--kind` filters. Hits
+with identical content (same sha256) or the same entry `id` are folded into
+one line that lists every location. Ranking never weights by kind.
 
 Usage
 -----
@@ -41,6 +50,7 @@ Usage
       --status active      only entries with this status
       --tag '#secret-management'   require this tag (repeatable)
       --type knowledge     only this frontmatter type
+      --kind kb            only this corpus kind (repeatable; default: all)
       --created-from 2026-05-01    created >= date (YYYY-MM-DD)
       --created-to   2026-06-30    created <= date
       --top N              number of results (default 8)
@@ -69,6 +79,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kb_index as kbi  # noqa: E402
 from lib import trust as _trust  # noqa: E402  (hooks/lib, on sys.path via kb_index)
+from lib import config as _config  # noqa: E402
 
 RRF_K = 60
 SNIPPET_CHARS = 160
@@ -137,15 +148,29 @@ def _ascii_terms(query: str, min_len: int = 2) -> list[str]:
     return out
 
 
-def lexical_rank(root: Path, query: str, use_mecab: bool) -> list[str]:
+def lexical_rank(root: Path, query: str, use_mecab: bool,
+                 ctx: "kbi.RootContext | None" = None) -> list[str]:
     """Return entry relpaths ranked by lexical relevance (best first).
 
     Scoring mirrors the existing hook: each matching term contributes 1/hit_count
     to every file it matched, so rare terms weigh more. Terms matching too many
     files are skipped as non-discriminating.
+
+    ripgrep runs over the key base (the knowledge root, or the repository
+    root in `scope: repo`) and only files in the index's candidate set count,
+    so an excluded capture or an ignored file never leaks into the ranking.
+    Files over the embedding size cap are still found here: rg reads them.
     """
     if not shutil.which("rg"):
         return []
+    ctx = ctx or kbi.context(root)
+    base = ctx.key_base
+    allowed = {key for _p, key in kbi.candidate_files(root, ctx)}
+    rg_opts: list[str] = []
+    if ctx.scope == "repo":
+        # The knowledge base lives under a dotdir; rg skips hidden paths by
+        # default. `.git` stays out; everything else is filtered by `allowed`.
+        rg_opts = ["--hidden", "--glob", "!.git/"]
 
     terms: list[str] = []
     if use_mecab:
@@ -167,25 +192,30 @@ def lexical_rank(root: Path, query: str, use_mecab: bool) -> list[str]:
     for term in uniq_terms:
         try:
             res = subprocess.run(
-                ["rg", "-l", "--fixed-strings", "--ignore-case", "--", term, str(root)],
+                ["rg", "-l", "--fixed-strings", "--ignore-case", *rg_opts, "--", term, str(base)],
                 capture_output=True,
                 text=True,
                 timeout=20,
             )
         except (OSError, subprocess.SubprocessError):
             continue
-        files = [ln for ln in res.stdout.splitlines() if ln.strip()]
+        files: list[str] = []
+        for ln in res.stdout.splitlines():
+            if not ln.strip():
+                continue
+            try:
+                rel = Path(ln).resolve().relative_to(base).as_posix()
+            except ValueError:
+                continue
+            if rel in allowed:
+                files.append(rel)
         n = len(files)
         if n == 0 or n > hit_count_limit:
             continue
-        for f in files:
-            p = Path(f)
-            if p.name == "CLAUDE.md":
-                continue
-            try:
-                rel = str(p.relative_to(root))
-            except ValueError:
-                continue
+        # rg prints hits in thread-completion order, which varies from run
+        # to run; sorting them fixes the order of equal scores (and so the
+        # RRF ranks) so the same query gives the same list every time.
+        for rel in sorted(files):
             scores[rel] = scores.get(rel, 0.0) + 1.0 / n
 
     return [rel for rel, _ in sorted(scores.items(), key=lambda kv: -kv[1])]
@@ -197,12 +227,10 @@ def lexical_rank(root: Path, query: str, use_mecab: bool) -> list[str]:
 
 def vector_rank(root: Path, query: str, k: int = 40) -> list[str]:
     """Return entry relpaths ranked by best (closest) chunk distance, best first."""
-    db_path = kbi.index_db_path(root)
-    if not db_path.exists():
+    conn = kbi.open_index(root)
+    if conn is None:
         return []
     qvec = kbi.embed_query(query)
-    conn = kbi.connect(db_path)
-    kbi.init_schema(conn)
     rows = conn.execute(
         """
         SELECT c.relpath, v.distance
@@ -243,11 +271,9 @@ def expand_see_one_hop(root: Path, top: list[str], fused: dict[str, float]) -> N
     (half the linking entry's score) so it can surface even if neither arm
     ranked it directly.
     """
-    db_path = kbi.index_db_path(root)
-    if not db_path.exists():
+    conn = kbi.open_index(root)
+    if conn is None:
         return
-    conn = kbi.connect(db_path)
-    kbi.init_schema(conn)
     known = {row[0] for row in conn.execute("SELECT relpath FROM entries")}
     for relpath in top:
         for (nb,) in conn.execute(
@@ -259,16 +285,19 @@ def expand_see_one_hop(root: Path, top: list[str], fused: dict[str, float]) -> N
 
 
 def _entry_meta(root: Path) -> dict[str, dict]:
-    db_path = kbi.index_db_path(root)
     meta: dict[str, dict] = {}
-    if not db_path.exists():
+    conn = kbi.open_index(root)
+    if conn is None:
         return meta
-    conn = kbi.connect(db_path)
-    kbi.init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(entries)")}
+    # A read-only (shared) index may predate schema 5: read what it has.
+    kind_sql = "kind" if "kind" in cols else "''"
+    emb_sql = "embedded" if "embedded" in cols else "1"
     for (relpath, title, tags, status, created, etype, description, handle,
-         eid, gen_by, gen_at, tier, tier_at) in conn.execute(
+         eid, gen_by, gen_at, tier, tier_at, sha, kind, embedded) in conn.execute(
         "SELECT relpath, title, tags, status, created, type, description, handle, "
-        "id, generated_by, generated_at, verified_tier, verified_at FROM entries"
+        f"id, generated_by, generated_at, verified_tier, verified_at, sha256, {kind_sql}, "
+        f"{emb_sql} FROM entries"
     ):
         meta[relpath] = {
             "title": title,
@@ -282,6 +311,9 @@ def _entry_meta(root: Path) -> dict[str, dict]:
             "created": created,
             "type": etype,
             "description": description or "",
+            "sha256": sha or "",
+            "kind": kind or "kb",
+            "embedded": bool(embedded),
         }
     conn.close()
     return meta
@@ -301,11 +333,9 @@ def entry_edges(root: Path, relpaths: list[str], meta: dict[str, dict], *,
     so the caller can render it without opening any file.
     """
     out: dict[str, dict] = {}
-    db_path = kbi.index_db_path(root)
-    if not db_path.exists():
+    conn = kbi.open_index(root)
+    if conn is None:
         return out
-    conn = kbi.connect(db_path)
-    kbi.init_schema(conn)
     for rp in relpaths:
         outgoing = [
             {"target": t, "rel": r, "label": lb or "",
@@ -334,8 +364,14 @@ def entry_edges(root: Path, relpaths: list[str], meta: dict[str, dict], *,
 
 
 def apply_filters(meta: dict, *, status, tags, etype, created_from, created_to,
-                  verified_min: str = "") -> bool:
-    if status and meta.get("status") != status:
+                  verified_min: str = "", kinds=None, conventions: str = "kb") -> bool:
+    """Frontmatter filters. `kinds` restricts the corpus kind (None = all).
+    `conventions` is the vocabulary the hit's corpus writes: a `plain`
+    corpus's `status: current` satisfies `--status active`."""
+    if kinds and meta.get("kind", "kb") not in kinds:
+        return False
+    if status and (_config.normalize_status(meta.get("status", ""), conventions)
+                   != _config.normalize_status(status, conventions)):
         return False
     if verified_min and not _trust.tier_at_least(meta.get("verified_tier", ""), verified_min):
         return False
@@ -405,21 +441,42 @@ def make_snippet(path: Path, query: str) -> str:
 # Driver
 # --------------------------------------------------------------------------- #
 
+def _fold_key(relpath: str, m: dict) -> tuple[str, str]:
+    """Hits with the same content (sha256) or the same entry `id` are one
+    result: the first-ranked location stands for all of them."""
+    if m.get("id"):
+        return ("id", m["id"])
+    if m.get("sha256"):
+        return ("sha", m["sha256"])
+    return ("path", relpath)
+
+
 def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
            status, tags, etype, created_from, created_to,
            max_edges: int = DEFAULT_EDGES,
            max_linked_from: int = DEFAULT_LINKED_FROM,
-           verified_min: str = "") -> list[dict]:
+           verified_min: str = "", kinds=None) -> list[dict]:
+    ctx = kbi.context(root)
+    base = ctx.key_base
     if lazy:
-        stale = kbi.detect_stale(root)
-        if stale:
-            kbi.reindex(root, only=stale, verbose=False)
+        if ctx.shared:
+            # A linked worktree reads the main checkout's index and never
+            # writes it: say how far behind it is instead of refreshing.
+            stale = kbi.detect_stale(root)
+            if stale:
+                print(f"ccmemo search: shared index {ctx.db_path} is behind on "
+                      f"{len(stale)} file(s) in this worktree (refresh from the main "
+                      f"checkout, or set {kbi.INDEX_ENV})", file=sys.stderr)
         else:
-            # An index built before the edges table existed: backfill the
-            # derived columns from the Markdown (no re-embedding).
-            kbi.ensure_metadata(root)
+            stale = kbi.detect_stale(root)
+            if stale:
+                kbi.reindex(root, only=stale, verbose=False)
+            else:
+                # An index built before the edges table existed: backfill the
+                # derived columns from the Markdown (no re-embedding).
+                kbi.ensure_metadata(root)
 
-    lex = lexical_rank(root, query, use_mecab)
+    lex = lexical_rank(root, query, use_mecab, ctx)
     vec = vector_rank(root, query)
     fused = rrf_fuse(lex, vec)
 
@@ -428,39 +485,56 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
     expand_see_one_hop(root, pre_top, fused)
 
     meta = _entry_meta(root)
+    # Folding: same id or same content -> one line, every location listed.
+    # Folded twins must be equivalent under the filters, so filter first.
     results = []
+    folded: dict[tuple[str, str], dict] = {}
     for relpath, score in sorted(fused.items(), key=lambda kv: -kv[1]):
         m = meta.get(relpath, {})
+        kind = m.get("kind", "kb")
         if not apply_filters(
             m, status=status, tags=tags, etype=etype,
             created_from=created_from, created_to=created_to,
-            verified_min=verified_min,
+            verified_min=verified_min, kinds=kinds,
+            conventions=ctx.cfg.conventions_of(kind),
         ):
             continue
+        fk = _fold_key(relpath, m)
+        head = folded.get(fk)
+        if head is not None:
+            head["locations"].append(relpath)
+            if m.get("sha256") != head.get("sha256"):
+                head["divergent"] = True
+            continue
+        if len(results) >= top:
+            continue  # keep folding into shown hits; do not open new ones
         description = m.get("description", "")
         source = "frontmatter" if description else "lead"
         if not description:
-            description = make_lead(root / relpath)
-        results.append(
-            {
-                "path": str(root / relpath),
-                "relpath": relpath,
-                "handle": m.get("handle") or entry_id(relpath),
-                "id": m.get("id", ""),
-                "title": m.get("title", relpath),
-                "score": round(score, 5),
-                "status": m.get("status", ""),
-                "tags": m.get("tags", []),
-                "description": description,
-                "description_source": source,
-                "generated": m.get("generated"),
-                "verified_tier": m.get("verified_tier", ""),
-                "verified_at": m.get("verified_at", ""),
-                "snippet": make_snippet(root / relpath, query),
-            }
-        )
-        if len(results) >= top:
-            break
+            description = make_lead(base / relpath)
+        r = {
+            "path": str(base / relpath),
+            "relpath": relpath,
+            "kind": kind,
+            "handle": m.get("handle") or entry_id(relpath),
+            "id": m.get("id", ""),
+            "title": m.get("title", relpath),
+            "score": round(score, 5),
+            "status": m.get("status", ""),
+            "tags": m.get("tags", []),
+            "description": description,
+            "description_source": source,
+            "generated": m.get("generated"),
+            "verified_tier": m.get("verified_tier", ""),
+            "verified_at": m.get("verified_at", ""),
+            "sha256": m.get("sha256", ""),
+            "embedded": m.get("embedded", True),
+            "locations": [],
+            "divergent": False,
+            "snippet": make_snippet(base / relpath, query),
+        }
+        folded[fk] = r
+        results.append(r)
 
     edge_info = entry_edges(
         root, [r["relpath"] for r in results], meta,
@@ -499,6 +573,21 @@ def entry_id(relpath: str) -> str:
     return m.group(1) if m else name
 
 
+def _kind_badge(r: dict) -> str:
+    """` [kind]` after the title; nothing when the hit carries no kind (an
+    index that predates 1.28, or a caller-built dict)."""
+    return f" [{r['kind']}]" if r.get("kind") else ""
+
+
+def _locations_line(r: dict, indent: str) -> str:
+    """`also: path, path` for a folded hit (same content or same id)."""
+    locs = r.get("locations") or []
+    if not locs:
+        return ""
+    note = " (divergent: same id, different content)" if r.get("divergent") else ""
+    return f"{indent}also: {', '.join(locs)}{note}"
+
+
 def _edge_line(e: dict, key: str, arrow: str) -> str:
     ref = e.get("handle") or entry_id(e[key])
     if e.get("label"):
@@ -533,8 +622,11 @@ def format_summary(results: list[dict]) -> str:
             desc = "(lead) " + desc
         flag = "" if r.get("status") in ("", "active") else f" ({r['status']})"
         tier = f" [{r['verified_tier']}]" if r.get("verified_tier") else ""
-        lines.append(f"* [{_trunc(r['title'], SUMMARY_TITLE_CHARS)}]({r['relpath']}){flag}{tier}"
-                     f" - {_trunc(desc, SUMMARY_DESC_CHARS)}")
+        lines.append(f"* [{_trunc(r['title'], SUMMARY_TITLE_CHARS)}]({r['relpath']})"
+                     f"{_kind_badge(r)}{flag}{tier} - {_trunc(desc, SUMMARY_DESC_CHARS)}")
+        also = _locations_line(r, "  ")
+        if also:
+            lines.append(also)
         shown = r.get("edges", [])
         for e in shown:
             lines.append(_edge_line(e, "target", ""))
@@ -560,8 +652,11 @@ def format_ranked(results: list[dict]) -> str:
     lines: list[str] = []
     for i, r in enumerate(results, 1):
         tier = f" [{r['verified_tier']}]" if r.get("verified_tier") else ""
-        lines.append(f"{i}. [{r['score']}] {r['title']}{tier}")
+        lines.append(f"{i}. [{r['score']}] {r['title']}{_kind_badge(r)}{tier}")
         lines.append(f"   {r['relpath']}  ({r['status']}) {' '.join(r['tags'][:6])}")
+        also = _locations_line(r, "   ")
+        if also:
+            lines.append(also)
         if r.get("description") and r.get("description_source", "frontmatter") == "frontmatter":
             lines.append(f"   when: {_trunc(r['description'], SUMMARY_DESC_CHARS)}")
         if r["snippet"]:
@@ -576,6 +671,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--status")
     ap.add_argument("--tag", action="append", default=[], dest="tags")
     ap.add_argument("--type", dest="etype")
+    ap.add_argument("--kind", action="append", default=[], dest="kinds",
+                    help="only hits of this corpus kind, e.g. kb or docs (repeatable; "
+                         "default: every kind)")
     ap.add_argument("--created-from")
     ap.add_argument("--created-to")
     ap.add_argument("--verified", choices=["machine", "human"], default="", dest="verified_min",
@@ -611,6 +709,7 @@ def main(argv: list[str]) -> int:
         max_edges=args.edges,
         max_linked_from=args.linked_from,
         verified_min=args.verified_min,
+        kinds=args.kinds or None,
     )
 
     if args.json:

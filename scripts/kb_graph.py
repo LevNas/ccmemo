@@ -18,6 +18,9 @@ Subcommands:
   verify <entry> --by A  append a verified event (independent check of the content)
   rename <entry> <slug>  change the slug only; rewrite every link to the entry
   relink                 repair links to paths the index recorded as moved
+  near-pairs             closest document pairs by embedding (from the search
+                         index), each marked linked / unlinked — duplicate
+                         candidates and missing links across corpora
   union-recover <file>   lossless union of two append-only copies of one file
                          that diverged across checkouts (captures, hub-entry
                          see: blocks) — verified, refuses anything else
@@ -90,6 +93,8 @@ from lib import frontmatter as _frontmatter  # noqa: E402
 from lib.edges import LINK_RE, LOOSE_LINK_RE  # noqa: E402,F401  (shared with kb_index)
 from lib import edges as _edges  # noqa: E402
 from lib import trust as _trust  # noqa: E402
+from lib import repo as _repo  # noqa: E402
+import struct
 import tempfile
 from collections import deque
 
@@ -123,7 +128,8 @@ SCHEMA_CHECKS = {
 }
 # Informational at every schema: they describe the state of the knowledge,
 # not a broken convention, so they never fail a pre-commit lint.
-ALWAYS_ADVISORY = {"verification-expired", "stale-after-passed", "duplicate-title"}
+ALWAYS_ADVISORY = {"verification-expired", "stale-after-passed", "duplicate-title",
+                   "divergent-mirror"}
 
 
 def kb_schema_version(root, override=None):
@@ -584,12 +590,70 @@ def cmd_index_md(nodes, out_path):
         sys.stdout.write(text)
 
 
+def _index_rows(db, columns, where=""):
+    """Rows of the index's plain `entries` table (no vector extension needed),
+    or [] when there is no index or the columns predate it."""
+    if not db or not os.path.exists(db):
+        return []
+    import sqlite3
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+    try:
+        have = {r[1] for r in conn.execute("PRAGMA table_info(entries)")}
+        if not set(columns) <= have:
+            return []
+        return conn.execute(f"SELECT {', '.join(columns)} FROM entries {where}").fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
+def divergent_mirrors(db):
+    """`divergent-mirror` findings from the index: the same entry `id` at
+    several paths (a mirror across corpora, or a copy) whose content differs.
+
+    The knowledge-base copy is the reference when there is exactly one;
+    otherwise the most common content is. Every other copy whose sha256
+    differs from the reference is reported, so an exact mirror stays silent
+    and the edited copy is named. Paths are the index's keys (repository-
+    relative in `scope: repo`).
+    """
+    rows = _index_rows(db, ("relpath", "id", "sha256", "kind"), "WHERE id != ''")
+    groups = {}
+    for relpath, eid, sha, kind in rows:
+        groups.setdefault(eid, []).append((relpath, sha or "", kind or ""))
+    findings = []
+    for eid, members in sorted(groups.items()):
+        if len({sha for _p, sha, _k in members}) < 2:
+            continue
+        kb = [m for m in members if m[2] == "kb"]
+        if len(kb) == 1:
+            ref_path, ref_sha = kb[0][0], kb[0][1]
+        else:
+            counts = {}
+            for _p, sha, _k in members:
+                counts[sha] = counts.get(sha, 0) + 1
+            ref_sha = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+            ref_path = sorted(p for p, sha, _k in members if sha == ref_sha)[0]
+        for relpath, sha, _kind in sorted(members):
+            if sha != ref_sha:
+                findings.append((relpath, "divergent-mirror",
+                                 f"id {eid} also at {ref_path} with different content — "
+                                 "merge the edit back or give this copy its own id"))
+    return findings
+
+
 def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json, schema=1,
              root=None):
     findings = list(problems)
     for cyc in supersede_cycles(edges):
         for nid in cyc:  # one finding per member so the only_files filter still hits
             findings.append((nid, "supersede-cycle", " → ".join(cyc + [cyc[0]])))
+    if root is not None:
+        findings.extend(divergent_mirrors(_index_db_path(root)))
     if registry_path and os.path.isfile(registry_path):
         with open(registry_path, encoding="utf-8") as f:
             registry_text = f.read()
@@ -1244,9 +1308,30 @@ def cmd_rename(root, nodes, args):
 
 
 def _index_db_path(root):
-    """`<root>/../.index/kb.db` — kb_index.index_db_path without importing it
-    (kb_graph stays plain-python3; the vector tables are never touched)."""
-    return os.path.normpath(os.path.join(os.path.abspath(root), "..", ".index", "kb.db"))
+    """The search index for `root`: `<root>/../.index/kb.db` in the checkout
+    that owns `.git` (from a linked worktree too), or `$CCMEMO_KB_INDEX`.
+    Same rule as kb_index.index_db_path, without importing it (kb_graph
+    stays plain-python3; the vector tables are never touched here)."""
+    override = os.environ.get("CCMEMO_KB_INDEX", "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    root_abs = os.path.abspath(root)
+    if _repo.is_linked_worktree(root_abs):
+        main = _repo.main_checkout(root_abs)
+        rel = _repo.in_repo_relpath(os.path.dirname(root_abs))
+        if main and rel is not None:
+            return os.path.normpath(os.path.join(main, rel, ".index", "kb.db"))
+    return os.path.normpath(os.path.join(root_abs, "..", ".index", "kb.db"))
+
+
+def _index_key_to_entry(root, key):
+    """An index key as an entries-root relpath: unchanged in `scope: kb`;
+    in `scope: repo` keys are repository-relative, so the knowledge root's
+    prefix is stripped. None when the key is not a knowledge entry."""
+    prefix = _repo.in_repo_relpath(os.path.abspath(root))
+    if prefix and key.startswith(prefix + "/"):
+        return key[len(prefix) + 1:]
+    return key
 
 
 def cmd_relink(root, nodes, args):
@@ -1262,7 +1347,7 @@ def cmd_relink(root, nodes, args):
     if not os.path.exists(db):
         sys.exit(f"error: no index at {db} — run a search or `kb_index.py` first")
     import sqlite3
-    conn = sqlite3.connect(db)
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "moves" not in names:
@@ -1275,6 +1360,8 @@ def cmd_relink(root, nodes, args):
     root_abs = os.path.abspath(root)
     total = 0
     for eid, old_rel, new_rel in moves:
+        old_rel = _index_key_to_entry(root, old_rel)
+        new_rel = _index_key_to_entry(root, new_rel)
         if new_rel not in nodes or old_rel in nodes:
             continue  # target gone again, or the old path is back: not a live move
         plans = _relink_plans(root_abs, nodes, old_rel, new_rel)
@@ -1287,6 +1374,130 @@ def cmd_relink(root, nodes, args):
             total += 1
     if total == 0:
         print("nothing to relink")
+
+
+def _cosine(a, b):
+    n = len(a) // 4  # float32 blobs
+    va = struct.unpack(f"{n}f", a)
+    vb = struct.unpack(f"{n}f", b)
+    dot = sum(x * y for x, y in zip(va, vb))
+    na = sum(x * x for x in va) ** 0.5
+    nb = sum(y * y for y in vb) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def near_pairs(db, *, top=20, threshold=0.0, kinds=None, cross_kind=False, per_entry=8):
+    """Closest document pairs by cosine similarity of their whole-document
+    ("full") chunk vectors, read from the search index; deterministic.
+
+    Each pair carries `linked` (an edge in either direction exists in the
+    index), `same_id` and `same_sha256`, so a reviewer can separate an
+    exact mirror (expected) from an edited copy or two independent
+    documents that say the same thing without linking each other.
+    `kinds` keeps only documents of those kinds; `cross_kind` keeps only
+    pairs whose kinds differ. Needs the `sqlite_vec` module (the vector
+    table is a loadable extension): run under `uv run --with sqlite-vec`.
+    """
+    if not os.path.exists(db):
+        sys.exit(f"error: no index at {db} — run a search or `kb_index.py` first")
+    try:
+        import sqlite_vec
+    except ImportError:
+        sys.exit("error: near-pairs reads the vector index and needs the sqlite_vec module: "
+                 "run `uv run --with sqlite-vec scripts/kb_graph.py near-pairs ...`")
+    import sqlite3
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(entries)")}
+    kind_sql = "e.kind" if "kind" in cols else "''"
+    docs = {}
+    for relpath, eid, sha, kind, vec in conn.execute(
+        f"SELECT e.relpath, e.id, e.sha256, {kind_sql}, v.embedding FROM entries e "
+        "JOIN chunks c ON c.relpath = e.relpath AND c.chunk_id = 'full' "
+        "JOIN vec_chunks v ON v.chunk_rowid = c.rowid ORDER BY e.relpath"
+    ):
+        kind = kind or "kb"
+        if kinds and kind not in kinds:
+            continue
+        docs[relpath] = {"id": eid or "", "sha256": sha or "", "kind": kind, "vec": vec}
+    linked = set()
+    for src, target in conn.execute("SELECT src, target FROM edges"):
+        linked.add((src, target))
+        linked.add((target, src))
+    # KNN over the whole-document vectors only, via a temporary vec0 table:
+    # exact, and no work on the per-section chunks.
+    dim = None
+    conn_rw = sqlite3.connect(":memory:")
+    conn_rw.enable_load_extension(True)
+    sqlite_vec.load(conn_rw)
+    conn_rw.enable_load_extension(False)
+    order = sorted(docs)
+    if len(order) < 2:
+        conn.close()
+        return []
+    dim = len(docs[order[0]]["vec"]) // 4
+    conn_rw.execute(f"CREATE VIRTUAL TABLE full_vecs USING vec0(doc INTEGER PRIMARY KEY, "
+                    f"embedding FLOAT[{dim}])")
+    for i, rp in enumerate(order):
+        conn_rw.execute("INSERT INTO full_vecs (doc, embedding) VALUES (?, ?)",
+                        (i, docs[rp]["vec"]))
+    k = min(len(order), per_entry + 1)
+    seen = set()
+    pairs = []
+    for i, rp in enumerate(order):
+        for (j,) in conn_rw.execute(
+            "SELECT doc FROM full_vecs WHERE embedding MATCH ? AND k = ?",
+            (docs[rp]["vec"], k),
+        ):
+            if j == i:
+                continue
+            key = (min(i, j), max(i, j))
+            if key in seen:
+                continue
+            seen.add(key)
+            a, b = order[key[0]], order[key[1]]
+            da, db_ = docs[a], docs[b]
+            if cross_kind and da["kind"] == db_["kind"]:
+                continue
+            cos = _cosine(da["vec"], db_["vec"])
+            if cos < threshold:
+                continue
+            pairs.append({
+                "a": a, "b": b, "kind_a": da["kind"], "kind_b": db_["kind"],
+                "cosine": round(cos, 4),
+                "linked": (a, b) in linked,
+                "same_id": bool(da["id"]) and da["id"] == db_["id"],
+                "same_sha256": da["sha256"] == db_["sha256"],
+            })
+    conn.close()
+    conn_rw.close()
+    pairs.sort(key=lambda p: (-p["cosine"], p["a"], p["b"]))
+    return pairs[:top] if top > 0 else pairs
+
+
+def cmd_near_pairs(root, args):
+    kinds = None
+    if args.kind and args.kind != "all":
+        kinds = {k.strip() for k in args.kind.split(",") if k.strip()}
+    pairs = near_pairs(_index_db_path(root), top=args.top, threshold=args.threshold,
+                       kinds=kinds, cross_kind=args.cross_kind)
+    if args.json:
+        print(json.dumps(pairs, ensure_ascii=False, indent=1))
+        return
+    if not pairs:
+        print("(no pairs)")
+        return
+    for p in pairs:
+        flags = []
+        flags.append("linked" if p["linked"] else "unlinked")
+        if p["same_sha256"]:
+            flags.append("same-content")
+        elif p["same_id"]:
+            flags.append("same-id")
+        print(f"{p['cosine']:.4f}  {' '.join(flags):<22}  [{p['kind_a']}] {p['a']}\n"
+              f"        {'':<22}  [{p['kind_b']}] {p['b']}")
 
 
 def main():
@@ -1356,6 +1567,15 @@ def main():
     rl = sub.add_parser("relink", help="repair links to paths the index recorded as moved")
     rl.add_argument("--dry-run", action="store_true",
                     help="print the planned rewrites without writing")
+    np_ = sub.add_parser("near-pairs",
+                         help="closest document pairs by embedding, from the search index")
+    np_.add_argument("--kind", default="all",
+                     help="restrict to these corpus kinds, comma-separated (default: all)")
+    np_.add_argument("--cross-kind", action="store_true", dest="cross_kind",
+                     help="only pairs whose kinds differ (e.g. kb-docs)")
+    np_.add_argument("--top", type=int, default=20, help="pairs to print (default 20; 0 = all)")
+    np_.add_argument("--threshold", type=float, default=0.0,
+                     help="minimum cosine similarity (default 0)")
     li = sub.add_parser("lint")
     li.add_argument("files", nargs="*",
                     help="limit findings to these files (e.g. staged entries)")
@@ -1386,6 +1606,10 @@ def main():
     if args.cmd == "union-recover":
         # file-level git recovery: needs no entry graph (or any KB at all)
         cmd_union_recover(args)
+        return
+    if args.cmd == "near-pairs":
+        # reads the index only: every corpus, not just the entries tree
+        cmd_near_pairs(args.root, args)
         return
 
     nodes, edges, problems = load_graph(args.root)

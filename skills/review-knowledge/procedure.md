@@ -87,6 +87,21 @@ Scan the entire knowledge base and report:
 - `fragment` entries older than 60 days that have accumulated 2+ `see:` links (hub-forming signal)
 - Report with prompt: "These entries may be ready for synthesis. Create one?"
 
+#### j2. Cross-Corpus Duplicates and Missing Links (only when the index covers the repository)
+- When the repository has opted in to `scope: repo` (`.claude/ccmemo.json`) and an
+  index exists, `uv run --with sqlite-vec "{plugin_root}/scripts/kb_graph.py" --root
+  .claude/knowledge/entries near-pairs --cross-kind --top 20` lists the closest
+  entry–document pairs with `linked` / `unlinked` and `same-content` / `same-id` marks
+- Read it as two lists: an unlinked pair with high similarity and no mirror mark is a
+  **duplicate candidate** (the same knowledge written twice — propose which one stays
+  and a `ref:` from the other); an unlinked pair of related but different documents is
+  a **missing link** (propose the `- ref:` line, entries-relative or `../` into the repo)
+- `graph_lint` may carry `divergent-mirror` (same entry `id` at several paths, different
+  content): the edited copy is named — propose merging the edit back into the entry, or
+  giving the copy its own `id` if it has become a different document
+- Skip this section silently when the index is knowledge-base only; never build an
+  index for it
+
 #### k. Superseded Chain Check
 - Entries with `status: superseded` must have a valid `superseded_by` path
 - Check that the replacement entry exists and is `active`

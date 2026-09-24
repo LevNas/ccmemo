@@ -19,10 +19,11 @@ choose to. Most updates need nothing from you.
 
 | You are updating from | What to read |
 |---|---|
-| 1.27.0 or later | Nothing to do. |
-| 1.26.x | [1.27: entry ids and verification](#127-entry-ids-and-verification). One command plus one line; nothing breaks if you skip it. |
-| 1.25.x or 1.24.x | The section above, plus [1.26: descriptions and link labels](#126-descriptions-and-link-labels). Optional work; nothing breaks if you skip it. |
-| 1.23.x or older | Both sections above, plus [1.24: tags and status](#124-tags-and-status). No work needed there, but two behaviours change. |
+| 1.28.0 or later | Nothing to do. |
+| 1.27.x | Nothing to do. [1.28: the index can cover the whole repository](#128-the-index-can-cover-the-whole-repository) describes an opt-in and two things you may notice. |
+| 1.26.x | The section above, plus [1.27: entry ids and verification](#127-entry-ids-and-verification). One command plus one line; nothing breaks if you skip it. |
+| 1.25.x or 1.24.x | The sections above, plus [1.26: descriptions and link labels](#126-descriptions-and-link-labels). Optional work; nothing breaks if you skip it. |
+| 1.23.x or older | All sections above, plus [1.24: tags and status](#124-tags-and-status). No work needed there, but two behaviours change. |
 
 ## What happens on its own
 
@@ -51,6 +52,86 @@ Until you do, the lint still lists what the new rules would report, but
 under a heading marked *advisory*, and the exit code stays 0. A pre-commit
 hook therefore keeps passing after an update. When you want to try the new
 rules before committing to them, run `kb_graph.py --schema 2 lint`.
+
+## 1.28: the index can cover the whole repository
+
+### Do I need to do anything?
+
+No. Nothing changes for you unless you ask for it: the search index still
+covers the knowledge base only, its file stays where it was, search results
+are the same, and the index format is upgraded in place on the next search
+without re-embedding anything (a metadata-only migration, as in 1.25 and
+1.27). There is no migration command and no line to write.
+
+### What changed
+
+The search index can now index **every document in the repository**, not
+only the knowledge base, so `/recall-knowledge` can find a design note in
+`docs/` or a memo next to the code. This is an **opt-in** per repository:
+commit a `.claude/ccmemo.json` with `{"index": {"scope": "repo"}}`. Each
+indexed file then has a *kind* — `kb` for knowledge entries, `docs` for the
+rest — shown in brackets after every hit's title, and `--kind` filters on
+it. Documents are found by what git knows (`.gitignore` keeps out the index
+itself, secrets and build output); a repository can refine the set and
+declare its own kinds in the same file. Files over 256 KB are indexed by
+metadata only. The full reference is in
+[hybrid-search.md](hybrid-search.md#multi-corpus-index-scope-repo).
+
+Two things changed for everyone:
+
+- **Linked git worktrees share the main checkout's index.** Before, a search
+  from a worktree built a second index inside the worktree (or needed
+  `CCMEMO_KB_INDEX` pinned by hand). Now it reads the main checkout's index
+  and never writes it. If you had pinned `CCMEMO_KB_INDEX` for that reason,
+  you can drop it; if you keep it, it still wins.
+- **A session start refreshes the index in the background** when an index
+  already exists, so the first search of a session does not pay for it. It
+  never builds an index you have not built yourself. `CCMEMO_INDEX_PREWARM=0`
+  turns it off.
+
+### What you will notice after the update
+
+- Every search hit shows `[kb]` after its title (the kind). With the default
+  scope that is the only kind there is.
+- Two hits with identical content, or two copies of the same entry (same
+  `id`), appear as one line with the other paths on an `also:` line.
+- The order of hits with exactly equal scores is now fixed (by path). Before
+  1.28 it could change from one run to the next.
+- From a linked worktree, a search may print one line on stderr saying the
+  shared index is behind on some files. Refresh from the main checkout.
+- `kb_graph.py lint` may list `divergent-mirror` under the informational
+  heading when the same entry `id` exists at several paths with different
+  content. It never fails the lint.
+
+### If you want to index the whole repository
+
+1. Commit `.claude/ccmemo.json`:
+
+   ```json
+   {
+     "index": {
+       "scope": "repo"
+     }
+   }
+   ```
+
+2. Build the index once from the main checkout; the first build embeds every
+   document that is not yet indexed, so on a large repository run it yourself
+   rather than inside the first search:
+
+   ```bash
+   uv run scripts/kb_index.py .claude/knowledge/entries
+   ```
+
+   The knowledge entries already in the index keep their embeddings.
+
+3. Search as before. Add `--kind kb` or `--kind docs` to restrict a search,
+   and `kb_graph.py near-pairs --cross-kind` to list knowledge entries and
+   documents that say the same thing without linking each other.
+
+To go back, remove the file (or set `"scope": "kb"`); the other documents
+drop out of the index on the next refresh and the entries keep their
+embeddings.
 
 ## 1.27: entry ids and verification
 

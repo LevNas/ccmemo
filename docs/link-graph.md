@@ -38,6 +38,7 @@ python3 scripts/kb_graph.py neighborhood <entry> --depth 2
 python3 scripts/kb_graph.py path <entry-a> <entry-b> # shortest link path
 python3 scripts/kb_graph.py lineage <entry>          # supersede chain → current authority
 python3 scripts/kb_graph.py link-add <src> <dst> --reason "why"  # deterministic writer
+uv run --with sqlite-vec scripts/kb_graph.py near-pairs --cross-kind  # from the search index
 python3 scripts/kb_graph.py supersede <old> <new> --reason "what changed"  # change flow
 python3 scripts/kb_graph.py lint                     # exit 1 on findings
 python3 scripts/kb_graph.py migrate --to 3           # add id / generated where missing (idempotent)
@@ -186,6 +187,7 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 | `verification-expired` | the latest `verified.at` is older than `generated.at`: the body was rewritten since it was checked (informational) |
 | `stale-after-passed` | `stale_after:` is behind today (informational) |
 | `duplicate-title` | two entries share a title — hard to tell apart in search results (informational) |
+| `divergent-mirror` | the same `id` at several paths in the search index (a mirror in another corpus, or a copy) with different content: the copy that differs from the knowledge-base one is named; an exact mirror is silent (informational; needs an index built with `scope: repo` to see other corpora) |
 
 **Schema-gated checks.** Checks are enforced only when the knowledge base
 declares the schema that introduced them in the frontmatter of
@@ -256,6 +258,32 @@ lint=$(ls -d "$HOME"/.claude/plugins/cache/*/ccmemo/*/scripts/kb_graph.py 2>/dev
 [ -n "$lint" ] || { echo "kb-lint: no plugin cache copy found — install ccmemo or commit a copy" >&2; exit 1; }
 exec python3 "$lint" lint $changed
 ```
+
+### `near-pairs [--kind K[,K]] [--cross-kind] [--top N] [--threshold T]`
+
+The one subcommand that reads the **search index** rather than the files:
+the closest document pairs by cosine similarity of their whole-document
+embeddings, deterministic, structure only. Each pair is printed with its
+similarity, `linked` or `unlinked` (an edge in either direction exists in the
+index's `edges` table), and `same-content` / `same-id` when the two are a
+byte-identical mirror or share an entry `id`:
+
+```
+0.9137  unlinked                [kb] 2026/09/20260901-000003-user-gamma.md
+                                [docs] docs/guide.md
+```
+
+Read it as two lists: *duplicate candidates* (high similarity, unlinked, not
+a known mirror) and *neighbours without a link* (two documents that say
+related things and do not point at each other). The judgement — merge, link,
+or leave — stays with `/review-knowledge`; this command only surfaces the
+pairs. `--kind kb,docs` restricts the documents considered, `--cross-kind`
+keeps only pairs whose kinds differ (the kb–docs axis), `--threshold`
+drops pairs below a similarity, `--top 0` prints all. `--json` gives the
+fields. Paths are the index's keys (repository-relative under `scope: repo`).
+Because the vector table is a loadable SQLite extension, this subcommand
+needs the `sqlite_vec` module: `uv run --with sqlite-vec scripts/kb_graph.py
+near-pairs`. Every other subcommand stays plain `python3`.
 
 ### `union-recover <file> [--theirs <ref>]`
 

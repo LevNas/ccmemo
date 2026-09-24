@@ -2,6 +2,89 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.28.0] - 2026-09-24
+
+Multi-corpus index (#49): the search index can cover the whole repository,
+with the knowledge base as one *kind* of corpus among others; one index in
+the main checkout, shared read-only by linked worktrees. Designed in the
+consumer's ADR (2026-09-24); the default `scope: kb` is unchanged in
+behaviour and needs no action (`docs/upgrading.md`, 1.28).
+
+### Added
+- `.claude/ccmemo.json` (`hooks/lib/config.py`, stdlib JSON): `index.scope`
+  `kb` (default) | `repo`; `extensions` (default `.md .markdown .txt .rst`),
+  `include` / `exclude` globs (defaults always excluded: session captures
+  `.claude/tasks/**/context-*.md` and `**/.index/**`), `max_file_bytes`
+  (256 KB: larger files get metadata only, no embedding — the lexical arm
+  still reads them), `corpora: [{kind, path, conventions}]` (longest path
+  prefix wins; `kb` is always the knowledge root). ccmemo bakes in no
+  repository layout: without a file, `kb` vs `docs` is the only distinction
+  and every convention is detected per file. `CCMEMO_INDEX_SCOPE` overrides.
+- `scope: repo`: the candidate set is `git ls-files` (tracked plus
+  untracked-not-ignored, so a just-written entry stays searchable as before)
+  filtered by extension and globs; `.gitignore` keeps the index, secrets and
+  build output out; nested repositories and worktrees are not entered. git
+  decides the set: when it cannot list a checkout that has a `.git`, the
+  run warns and indexes the knowledge base only (removing nothing) rather
+  than walk the tree without `.gitignore`; only a directory with no `.git`
+  at all is walked, with a warning that ignore rules do not apply. Index
+  keys become repository-relative; switching scope re-keys knowledge entries
+  without re-embedding. `CLAUDE.md` files are never indexed at any scope.
+- `hooks/lib/repo.py`: repository resolution via `git rev-parse
+  --git-common-dir`. The index file stays at `<main checkout>/.claude/knowledge/.index/kb.db`
+  and is resolved the same from every linked worktree; from a worktree it is
+  opened read-only, the lazy refresh is skipped and a one-line staleness
+  warning names how many files it is behind on. `kb_index.py` refuses to
+  write from a worktree. `CCMEMO_KB_INDEX=<file>` overrides the location and
+  lifts the rule (the documented "pin it by hand in a worktree" pitfall is
+  gone).
+- Index schema 5 (metadata-only upgrade, embeddings untouched):
+  `entries.kind`, `size_bytes`, `embedded`; `meta.scope`.
+- Edge extractor `markdown-links` (`hooks/lib/edges.py`): inline
+  `[text](relative.md)` links, `rel = ref`, label = link text; typed
+  `- see:` lines, fenced code, images, `http(s)`/anchor targets and links
+  that resolve to no indexed document produce nothing. Runs in `scope: repo`
+  on every file; `scope: kb` keeps the pre-1.28 extractor set so its edges —
+  and one-hop expansion — do not change.
+- `kb_search.py`: `--kind` filter (repeatable, default all), `[kind]` badge
+  after the title in ranked and `--summary` output, folding of hits with the
+  same sha256 or the same entry `id` into one line with an `also:` line of
+  the other locations (`divergent` when a same-`id` copy differs); `--json`
+  carries `kind`, `sha256`, `embedded`, `locations`, `divergent`. Title
+  falls back to the first `#` heading, then the filename. `status: current`
+  satisfies `--status active` for `plain` corpora. The lexical arm runs over
+  the index's candidate set, so excluded files never leak in, and orders
+  equal scores by path — the same query now gives the same list every run
+  (ripgrep's output order varied between runs before).
+- `kb_graph.py near-pairs [--kind K,K] [--cross-kind] [--top N]
+  [--threshold T]`: closest document pairs by cosine of the whole-document
+  vectors read from the index, each marked `linked` / `unlinked`,
+  `same-content` / `same-id`; deterministic, structure only; needs the
+  `sqlite_vec` module (`uv run --with sqlite-vec`). Lint advisory
+  `divergent-mirror`: the same `id` at several paths with different content
+  (the copy differing from the knowledge-base one is named; exact mirrors are
+  silent). `relink` maps repository-relative move records back to entry
+  paths.
+- SessionStart hook `hooks/sessionstart_index_prewarm.py`: starts the
+  incremental refresh (`uv run --no-project`, so the repository's own
+  `pyproject.toml` is never synced unattended) detached and `nice`d when an
+  index already exists, in the main checkout only, with a pid lock under
+  `.index/` that is ignored once older than six hours; `prewarm.log` is
+  truncated past 512 KB; never builds an index that was not built
+  explicitly; `CCMEMO_INDEX_PREWARM=0` opts out.
+- `tests/test_multicorpus.py`: the issue #49 fixture (temporary git
+  repository with a linked worktree) and its invariants; the vector half runs
+  under `uv run --with sqlite-vec --with fastembed`.
+- Docs: `hybrid-search.md` (multi-corpus configuration reference with
+  placeholder names, worktrees), `link-graph.md` (`near-pairs`,
+  `divergent-mirror`), `upgrading.md` / `upgrading.ja.md` 1.28 section,
+  `architecture.md`; `/recall-knowledge` and `/review-knowledge` procedures
+  mention `--kind`, folding and `near-pairs`.
+
+### Changed
+- `hooks/post-merge.sample`: the indexer script path variable is
+  `CCMEMO_KB_INDEXER` (`CCMEMO_KB_INDEX` now names the index file).
+
 ## [1.27.0] - 2026-09-24
 
 ### Added
