@@ -23,9 +23,13 @@ behaviour and needs no action (`docs/upgrading.md`, 1.28).
 - `scope: repo`: the candidate set is `git ls-files` (tracked plus
   untracked-not-ignored, so a just-written entry stays searchable as before)
   filtered by extension and globs; `.gitignore` keeps the index, secrets and
-  build output out; nested repositories and worktrees are not entered. Index
+  build output out; nested repositories and worktrees are not entered. git
+  decides the set: when it cannot list a checkout that has a `.git`, the
+  run warns and indexes the knowledge base only (removing nothing) rather
+  than walk the tree without `.gitignore`; only a directory with no `.git`
+  at all is walked, with a warning that ignore rules do not apply. Index
   keys become repository-relative; switching scope re-keys knowledge entries
-  without re-embedding.
+  without re-embedding. `CLAUDE.md` files are never indexed at any scope.
 - `hooks/lib/repo.py`: repository resolution via `git rev-parse
   --git-common-dir`. The index file stays at `<main checkout>/.claude/knowledge/.index/kb.db`
   and is resolved the same from every linked worktree; from a worktree it is
@@ -62,9 +66,12 @@ behaviour and needs no action (`docs/upgrading.md`, 1.28).
   silent). `relink` maps repository-relative move records back to entry
   paths.
 - SessionStart hook `hooks/sessionstart_index_prewarm.py`: starts the
-  incremental refresh detached and `nice`d when an index already exists, in
-  the main checkout only, with a pid lock under `.index/`; never builds an
-  index that was not built explicitly; `CCMEMO_INDEX_PREWARM=0` opts out.
+  incremental refresh (`uv run --no-project`, so the repository's own
+  `pyproject.toml` is never synced unattended) detached and `nice`d when an
+  index already exists, in the main checkout only, with a pid lock under
+  `.index/` that is ignored once older than six hours; `prewarm.log` is
+  truncated past 512 KB; never builds an index that was not built
+  explicitly; `CCMEMO_INDEX_PREWARM=0` opts out.
 - `tests/test_multicorpus.py`: the issue #49 fixture (temporary git
   repository with a linked worktree) and its invariants; the vector half runs
   under `uv run --with sqlite-vec --with fastembed`.
