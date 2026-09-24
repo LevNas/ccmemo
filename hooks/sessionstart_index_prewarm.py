@@ -18,9 +18,16 @@ Runs only when all of these hold — otherwise it exits 0 without output:
   main checkout's index and never write it) and not a harness agent worktree;
 - `uv` is on PATH;
 - no refresh started by an earlier session is still running (a lock file
-  under `.index/` holds its pid).
+  under `.index/` holds its pid). A lock whose pid is dead, or that is
+  older than `LOCK_MAX_AGE` (a refresh never runs that long: the pid was
+  reused after a crash or a reboot), is ignored. `rm
+  .claude/knowledge/.index/prewarm.lock` clears one by hand.
 
-Output of the refresh goes to `.index/prewarm.log`. Opt out with
+The refresh runs as `uv run --no-project scripts/kb_index.py`: the script's
+inline metadata declares its dependencies, and `--no-project` keeps `uv`
+from discovering — and syncing, unattended — whatever `pyproject.toml`
+sits above the knowledge base. Output goes to `.index/prewarm.log`, which
+is truncated once it exceeds `LOG_MAX_BYTES`. Opt out with
 `CCMEMO_INDEX_PREWARM=0`. Fail-open: any error exits 0 silently.
 """
 
@@ -29,6 +36,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.agent_worktree import is_agent_worktree  # noqa: E402
@@ -37,6 +45,8 @@ from lib import repo as _repo  # noqa: E402
 KB_INDEX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "kb_index.py")
 LOCK_NAME = "prewarm.lock"
 LOG_NAME = "prewarm.log"
+LOCK_MAX_AGE = 6 * 3600      # seconds; older locks are stale whatever their pid says
+LOG_MAX_BYTES = 512 * 1024   # the log is truncated once it grows past this
 
 
 def _pid_alive(pid: int) -> bool:
@@ -51,13 +61,32 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _lock_held(lock_path: str) -> bool:
+def _lock_held(lock_path: str, now: float | None = None) -> bool:
+    """True when the lock names a live pid and is younger than LOCK_MAX_AGE.
+
+    Pid liveness alone is not enough: after SIGKILL, an OOM kill or a reboot
+    the pid can be reused by an unrelated process and the lock would then
+    silence every later SessionStart. Age bounds that.
+    """
     try:
         with open(lock_path, encoding="utf-8") as f:
             pid = int(f.read().strip() or "0")
+        age = (time.time() if now is None else now) - os.path.getmtime(lock_path)
     except (OSError, ValueError):
         return False
+    if age > LOCK_MAX_AGE:
+        return False
     return pid > 0 and _pid_alive(pid)
+
+
+def _open_log(path: str):
+    """The log for appending, truncated first when it has grown past LOG_MAX_BYTES."""
+    try:
+        if os.path.getsize(path) > LOG_MAX_BYTES:
+            open(path, "wb").close()
+    except OSError:
+        pass
+    return open(path, "ab")
 
 
 def plan(cwd: str, env: dict) -> tuple[str, str, str] | None:
@@ -84,9 +113,12 @@ def plan(cwd: str, env: dict) -> tuple[str, str, str] | None:
 
 
 def start(root: str, index_dir: str, lock: str) -> None:
-    log = open(os.path.join(index_dir, LOG_NAME), "ab")
+    log = _open_log(os.path.join(index_dir, LOG_NAME))
     nice = ["nice", "-n", "10"] if shutil.which("nice") else []
-    cmd = [*nice, "uv", "run", os.path.abspath(KB_INDEX), root]
+    if not nice:
+        log.write(b"ccmemo prewarm: 'nice' not on PATH; the refresh runs at normal priority\n")
+        log.flush()
+    cmd = [*nice, "uv", "run", "--no-project", os.path.abspath(KB_INDEX), root]
     # The child owns the lock: it writes its pid and removes the file when
     # the refresh ends, whatever the outcome.
     script = ("echo $$ > \"$0\"; \"${@:1}\"; rc=$?; rm -f \"$0\"; exit $rc")

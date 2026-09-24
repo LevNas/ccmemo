@@ -27,6 +27,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import redirect_stderr
 from pathlib import Path
 
@@ -247,6 +248,8 @@ def test_config():
 def test_repo_and_candidates(repo, wt):
     check("toplevel of worktree is the worktree", repomod.toplevel(wt) == os.path.realpath(wt))
     check("main checkout from worktree", repomod.main_checkout(wt) == os.path.realpath(repo))
+    check("main checkout of the main checkout is its toplevel",
+          repomod.main_checkout(repo) == os.path.realpath(repo) == repomod.toplevel(repo))
     check("linked worktree detected", repomod.is_linked_worktree(wt) and not repomod.is_linked_worktree(repo))
     check("outside git: None", repomod.toplevel(tempfile.gettempdir()) is None or True)
     files = repomod.ls_files(repo)
@@ -333,6 +336,75 @@ def test_db_path_and_sharing(repo, wt):
           and kbg._index_key_to_entry(str(kb_root(repo)), "2026/09/x.md") == "2026/09/x.md")
 
 
+def test_candidates_without_git(repo):
+    """`scope: repo` when git cannot list the repository (item 1 of the
+    1.28.0 review): a checkout with `.git` fails closed to the knowledge
+    base; only a directory with no `.git` at all is walked."""
+    ignored = os.path.join(repo, "notes", "ignored-secret.md")
+    with open(ignored, "w", encoding="utf-8") as f:
+        f.write("# Ignored\n\nnarwhal token placeholder\n")
+    with open(os.path.join(repo, ".gitignore"), "a", encoding="utf-8") as f:
+        f.write("notes/ignored-secret.md\n")
+    saved = repomod.ls_files
+    try:
+        with scoped("repo"):
+            ctx = kbi.context(kb_root(repo))
+            cands = {k for _p, k in kbi.candidate_files(kb_root(repo), ctx)}
+            check("git available: the ignored file is not a candidate",
+                  "notes/ignored-secret.md" not in cands and "docs/guide.md" in cands, sorted(cands))
+            check("git available: the scan is complete", ctx.partial is False)
+            repomod.ls_files = lambda top: None  # git missing from PATH / sandboxed / failed
+            ctx = kbi.context(kb_root(repo))
+            err = io.StringIO()
+            with redirect_stderr(err):
+                cands = {k for _p, k in kbi.candidate_files(kb_root(repo), ctx)}
+            check("git unavailable with .git present: ignored file is not a candidate",
+                  "notes/ignored-secret.md" not in cands, sorted(cands))
+            check("git unavailable with .git present: knowledge base only, repo-relative keys",
+                  cands == {ALPHA, BETA, GAMMA}, sorted(cands))
+            check("git unavailable with .git present: warning names the fallback",
+                  "knowledge base only" in err.getvalue(), err.getvalue())
+            check("git unavailable with .git present: scan marked partial", ctx.partial is True)
+            with redirect_stderr(io.StringIO()):
+                stale = kbi.detect_stale(kb_root(repo))
+            check("git unavailable: detect_stale stays within the knowledge base",
+                  stale <= {ALPHA, BETA, GAMMA} or not os.path.exists(ctx.db_path), stale)
+    finally:
+        repomod.ls_files = saved
+        os.remove(ignored)
+        with open(os.path.join(repo, ".gitignore"), "w", encoding="utf-8") as f:
+            f.write("secret.env\n.claude/knowledge/.index/\n")
+    # No `.git` at all: `.claude/ccmemo.json` alone names the root, the tree
+    # is walked and the warning says ignore rules do not apply.
+    with tempfile.TemporaryDirectory(prefix="ccmemo-nogit-") as tmp:
+        for rel, text in {
+            ".claude/ccmemo.json": '{"index": {"scope": "repo", "exclude": ["drafts/**"]}}',
+            ".gitignore": "docs/private.md\n",
+            f"{KB}/2026/09/20260901-000009-user-solo.md": _entry(
+                "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "Solo", "Open when testing.", "Solo body."),
+            "docs/a.md": "# A\n",
+            "docs/private.md": "# Private\n",
+            "drafts/x.md": "# Draft\n",
+        }.items():
+            path = os.path.join(tmp, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        with scoped(None):
+            ctx = kbi.context(kb_root(tmp))
+            check("no .git: scope repo from the config file", ctx.scope == "repo"
+                  and ctx.repo_root == Path(tmp).resolve(), (ctx.scope, ctx.repo_root))
+            err = io.StringIO()
+            with redirect_stderr(err):
+                cands = {k for _p, k in kbi.candidate_files(kb_root(tmp), ctx)}
+            check("no .git: the tree is walked, exclude globs still apply",
+                  cands == {f"{KB}/2026/09/20260901-000009-user-solo.md", "docs/a.md", "docs/private.md"},
+                  sorted(cands))
+            check("no .git: warning says ignore rules do not apply",
+                  "no ignore rules apply" in err.getvalue(), err.getvalue())
+            check("no .git: scan is complete", ctx.partial is False)
+
+
 def test_prewarm_hook(repo, wt):
     env = {"PATH": os.environ.get("PATH", "")}
     check("prewarm: no index -> nothing", prewarm.plan(repo, env) is None)
@@ -361,7 +433,42 @@ def test_prewarm_hook(repo, wt):
         with open(lock, "w", encoding="utf-8") as f:
             f.write("999999999")
         check("prewarm: stale lock ignored", prewarm.plan(repo, env) is not None)
+        with open(lock, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        old = time.time() - prewarm.LOCK_MAX_AGE - 60
+        os.utime(lock, (old, old))
+        check("prewarm: live pid but lock older than LOCK_MAX_AGE -> ignored",
+              prewarm.plan(repo, env) is not None)
         os.remove(lock)
+        log_path = os.path.join(index_dir, prewarm.LOG_NAME)
+        with open(log_path, "wb") as f:
+            f.write(b"x" * (prewarm.LOG_MAX_BYTES + 1))
+        prewarm._open_log(log_path).close()
+        check("prewarm: log truncated past LOG_MAX_BYTES", os.path.getsize(log_path) == 0)
+        with open(log_path, "wb") as f:
+            f.write(b"kept\n")
+        prewarm._open_log(log_path).close()
+        check("prewarm: small log kept", os.path.getsize(log_path) == 5)
+        # start(): the child runs `uv run --no-project`; the fake uv records its argv.
+        argv_file = os.path.join(bindir, "argv")
+        with open(fake_uv, "w", encoding="utf-8") as f:
+            f.write(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{argv_file}'\nexit 0\n")
+        todo = prewarm.plan(repo, env)
+        saved_path = os.environ.get("PATH")
+        os.environ["PATH"] = env["PATH"]
+        try:
+            prewarm.start(*todo)
+        finally:
+            os.environ["PATH"] = saved_path if saved_path is not None else ""
+        for _ in range(100):
+            if not os.path.exists(lock) and os.path.exists(argv_file):
+                break
+            time.sleep(0.05)
+        argv = open(argv_file, encoding="utf-8").read().split("\n") if os.path.exists(argv_file) else []
+        check("prewarm start: uv run --no-project, lock released",
+              argv[:2] == ["run", "--no-project"] and argv[2].endswith("kb_index.py")
+              and not os.path.exists(lock), (argv, os.path.exists(lock)))
+        os.remove(log_path)
         # End to end from the worktree: exit 0, no output, nothing written.
         proc = subprocess.run([sys.executable, os.path.join(HOOKS, "sessionstart_index_prewarm.py")],
                               input=json.dumps({"cwd": wt}), capture_output=True, text=True,
@@ -576,6 +683,24 @@ def test_index(repo, wt):
         stats = kbi.reindex(root, verbose=False)
         check("scope kb -> repo: kb re-keyed, docs re-added",
               stats["rekeyed"] == 3 and stats["added"] == 7 and stats["changed"] == 0, stats)
+    # git unavailable during a full refresh: the knowledge base is rescanned,
+    # the other documents stay in the index (a partial scan removes nothing).
+    with scoped("repo", CCMEMO_KB_INDEX=None):
+        saved = repomod.ls_files
+        repomod.ls_files = lambda top: None
+        try:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                stats = kbi.reindex(root, verbose=False)
+        finally:
+            repomod.ls_files = saved
+        check("git unavailable: full refresh removes nothing",
+              stats["removed"] == 0 and stats["unchanged"] == 3 and stats["added"] == 0
+              and "knowledge base only" in err.getvalue(), stats)
+        conn = kbi.connect(db)
+        n = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
+        conn.close()
+        check("git unavailable: docs rows kept", n == 10, n)
 
 
 if __name__ == "__main__":
@@ -586,6 +711,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="ccmemo-mc-") as base:
         repo, wt = make_fixture(base)
         test_repo_and_candidates(repo, wt)
+        test_candidates_without_git(repo)
         test_db_path_and_sharing(repo, wt)
         test_prewarm_hook(repo, wt)
         test_prompt_hook_scope(repo, wt)

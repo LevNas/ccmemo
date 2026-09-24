@@ -68,12 +68,18 @@ def main_checkout(path: str) -> str | None:
     """Root of the main checkout: the parent of the shared ``.git`` directory.
 
     Equal to :func:`toplevel` in the main checkout itself; from a linked
-    worktree it points back at the checkout that owns ``.git``.
+    worktree it points back at the checkout that owns ``.git``. The
+    ``dirname(common)`` rule only holds for a *linked* worktree: in a
+    submodule ``.git`` is a file pointing into ``<super>/.git/modules/…``
+    (own ``git_dir == common``), where the parent of the common dir is not
+    a checkout at all — so the toplevel is returned whenever the two match.
     """
     info = _rev_parse(_start_dir(path))
     if info is None:
         return None
-    _top, _git_dir, common = info
+    top, git_dir, common = info
+    if git_dir == common:
+        return top
     return os.path.dirname(common)
 
 

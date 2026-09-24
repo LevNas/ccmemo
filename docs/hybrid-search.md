@@ -181,10 +181,21 @@ changed/new entries are re-embedded just-in-time (disable with `--no-lazy`).
 A **SessionStart hook** (`hooks/sessionstart_index_prewarm.py`) starts the
 same incremental refresh in the background when a session begins — detached,
 `nice`d, in the main checkout only, and only when an index already exists (an
-index is built explicitly, never as a side effect of starting a session). A
-lock file under `.index/` stops two refreshes from overlapping; output goes to
-`.index/prewarm.log`. Lazy refresh remains the correctness layer; the hook only
-moves the cost earlier. Opt out with `CCMEMO_INDEX_PREWARM=0`.
+index is built explicitly, never as a side effect of starting a session). It
+runs `uv run --no-project scripts/kb_index.py`, so `uv` never picks up — or
+syncs, unattended — a `pyproject.toml` of the repository above the knowledge
+base. A lock file, `.index/prewarm.lock`, stops two refreshes from
+overlapping; a lock whose pid is dead or that is older than six hours is
+ignored (a refresh never runs that long — the pid was reused after a crash or
+a reboot). If a session start seems to skip the refresh, remove it by hand:
+
+```bash
+rm .claude/knowledge/.index/prewarm.lock
+```
+
+Output goes to `.index/prewarm.log`, which is truncated once it passes
+512 KB. Lazy refresh remains the correctness layer; the hook only moves the
+cost earlier. Opt out with `CCMEMO_INDEX_PREWARM=0`.
 
 ## Multi-corpus index (`scope: repo`)
 
@@ -205,10 +216,35 @@ That is the whole opt-in. The candidate set is then what git knows under the
 repository root — tracked files plus untracked files that are not ignored —
 so `.gitignore` decides what stays out (the index itself, secrets, build
 output) and every linked worktree sees the same set. Nested repositories and
-worktrees under `.claude/worktrees/` are not descended into. Outside git the
-directory holding `.claude/ccmemo.json` is walked instead. Source code is out
-of scope by design (that is a language server's job): only files with a
+worktrees under `.claude/worktrees/` are not descended into. Source code is
+out of scope by design (that is a language server's job): only files with a
 document extension are indexed — `.md`, `.markdown`, `.txt`, `.rst`.
+
+**git decides the set, and the fallback is closed.** When the checkout has a
+`.git` but git cannot answer (not on `PATH`, a sandboxed subagent, a
+transient failure), the run does not walk the tree — that would drop the
+`.gitignore` protection silently. It prints one line on stderr, indexes the
+knowledge base only for that run, and removes nothing from the index; the
+other documents are picked up again on the next run where git answers. Only
+a directory with no `.git` at all (a `.claude/ccmemo.json` outside any
+repository) is walked, and the warning there says that no ignore rules
+apply — `exclude` globs still do.
+
+**Untracked files are candidates until they are ignored.** "Untracked but
+not ignored" is what keeps a just-written entry searchable before it is
+committed, and it applies to every document in the repository: a scratch
+`notes.md` or a `credentials.md` dropped next to the code is embedded on the
+next refresh and can surface in snippets and in `--summary` leads until it is
+ignored or excluded. Commit a `.gitignore` for scratch directories, and use
+`exclude` globs (below) for drafts you keep in the tree; both act on the
+next refresh, and `.gitignore` also protects every clone and worktree.
+
+`CLAUDE.md` files are instructions to the harness, not documents, and are
+never indexed at any scope — the knowledge base's own `CLAUDE.md` was
+excluded before 1.28 and the same rule applies to every `CLAUDE.md` in the
+repository. `.claude/rules/*.md` and other Markdown under `.claude/` are
+ordinary documents; add `".claude/rules/**"` to `exclude` if you do not want
+them searchable.
 
 Each indexed file has a **kind**. With no further configuration there are
 two: `kb` (the knowledge base root, `.claude/knowledge/entries`) and `docs`

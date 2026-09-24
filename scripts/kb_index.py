@@ -202,6 +202,10 @@ class RootContext:
     key_base: Path                    # relpaths are relative to this
     db_path: Path
     shared: bool                      # DB belongs to another checkout: open read-only
+    # Set by candidate_files when git could not list the repository and the
+    # run fell back to the knowledge base: the set is incomplete, so a full
+    # refresh must not treat the missing files as deleted.
+    partial: bool = False
 
     @property
     def scope(self) -> str:
@@ -455,6 +459,33 @@ def _chunk_entry(entry: Entry) -> list[tuple[str, str]]:
     return chunks
 
 
+def _kb_candidates(ctx: RootContext) -> list[tuple[Path, str]]:
+    """Every `*.md` under the knowledge root except `CLAUDE.md`, keyed
+    relative to `ctx.key_base` (the pre-1.28 set; `exclude` globs apply)."""
+    found: list[tuple[Path, str]] = []
+    for path in sorted(ctx.root.rglob("*.md")):
+        if path.name == "CLAUDE.md" or not path.is_file():
+            continue
+        rel = ctx.repo_rel(path)
+        if rel is not None and ctx.cfg.excluded(rel):
+            continue
+        key = ctx.key_of(path)
+        if key is not None:
+            found.append((path, key))
+    return found
+
+
+def _walk_files(top: Path) -> list[str]:
+    """Every file under *top* as a POSIX relpath, `.git` skipped. Applies no
+    ignore rules: only for a directory that is not a git repository."""
+    rels: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(top):
+        dirnames[:] = sorted(d for d in dirnames if d != ".git")
+        for fn in filenames:
+            rels.append((Path(dirpath) / fn).relative_to(top).as_posix())
+    return rels
+
+
 def candidate_files(root: Path, ctx: RootContext | None = None) -> list[tuple[Path, str]]:
     """The files this index covers, as (absolute path, index key), sorted by key.
 
@@ -463,30 +494,30 @@ def candidate_files(root: Path, ctx: RootContext | None = None) -> list[tuple[Pa
     `scope: repo` — what git knows under the repository root (tracked and
     untracked-not-ignored; nested repositories and worktrees are not
     descended into), narrowed by the extension allowlist, the include and
-    exclude globs. Without git the tree is walked instead. No file is read.
+    exclude globs. git decides the set: if the checkout has a `.git` but git
+    cannot answer (not on PATH, sandboxed, a transient failure), this run
+    fails closed — a warning on stderr, the knowledge base only, and
+    `ctx.partial` set so a full refresh removes nothing — rather than walk
+    the tree without `.gitignore`. Only a directory with no `.git` at all
+    (`.claude/ccmemo.json` outside any repository) is walked, and the
+    warning says that ignore rules do not apply there. No file is read.
     """
     ctx = ctx or context(root)
-    found: list[tuple[Path, str]] = []
     if ctx.scope != "repo":
-        for path in sorted(ctx.root.rglob("*.md")):
-            if path.name == "CLAUDE.md" or not path.is_file():
-                continue
-            rel = ctx.repo_rel(path)
-            if rel is not None and ctx.cfg.excluded(rel):
-                continue
-            key = ctx.key_of(path)
-            if key is not None:
-                found.append((path, key))
-        return found
+        return _kb_candidates(ctx)
     assert ctx.repo_root is not None
     rels = _repo.ls_files(str(ctx.repo_root))
     if rels is None:
-        rels = []
-        for dirpath, dirnames, filenames in os.walk(ctx.repo_root):
-            dirnames[:] = sorted(d for d in dirnames if d != ".git")
-            for fn in filenames:
-                p = Path(dirpath) / fn
-                rels.append(p.relative_to(ctx.repo_root).as_posix())
+        if (ctx.repo_root / ".git").exists():
+            print(f"ccmemo index: git could not list {ctx.repo_root} — .gitignore "
+                  "cannot be applied, so this run indexes the knowledge base only "
+                  "(nothing is removed from the index)", file=sys.stderr)
+            ctx.partial = True
+            return _kb_candidates(ctx)
+        print(f"ccmemo index: {ctx.repo_root} is not a git repository — walking "
+              "it; no ignore rules apply (exclude globs still do)", file=sys.stderr)
+        rels = _walk_files(ctx.repo_root)
+    found: list[tuple[Path, str]] = []
     for rel in sorted(rels):
         if not ctx.cfg.is_candidate(rel):
             continue
@@ -1006,8 +1037,10 @@ def reindex(root: Path, *, only: set[str] | None = None, verbose: bool = True) -
     embedded_chunks = 0
     skipped = 0
 
-    # Removals (skip when scoped to `only`, since we did not scan everything).
-    if only is None:
+    # Removals (skip when scoped to `only`, or when git could not list the
+    # repository and the scan covered the knowledge base only: in both cases
+    # we did not scan everything).
+    if only is None and not ctx.partial:
         for relpath in list(stored):
             if relpath not in entries:
                 _delete_entry_rows(conn, relpath)
