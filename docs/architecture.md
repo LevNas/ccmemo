@@ -10,9 +10,11 @@ library module keeps their view of an entry's frontmatter identical:
 
 | Script | Runtime | Role | Since |
 |--------|---------|------|-------|
-| `kb_index.py` | `uv` (fastembed, sqlite-vec) | Build/refresh the per-machine vector index (sha256 incremental, idempotent) | v1.11.0 |
-| `kb_search.py` | `uv` (fastembed, sqlite-vec) | Hybrid query: lexical + vector arms, RRF fusion, `see:` 1-hop expansion, frontmatter filters | v1.11.0 |
-| `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / `lineage` / `link-add` / deterministic `lint`; `union-recover` for append-only files diverged across checkouts (v1.23.0) | v1.15.0 |
+| `kb_index.py` | `uv` (fastembed, sqlite-vec) | Build/refresh the per-machine vector index (sha256 incremental, idempotent); since v1.28.0 optionally over every document git knows in the repository (`scope: repo`), each with a `kind`, from the main checkout only | v1.11.0 |
+| `kb_search.py` | `uv` (fastembed, sqlite-vec) | Hybrid query: lexical + vector arms, RRF fusion, `see:` 1-hop expansion, frontmatter filters; `--kind` and same-content / same-`id` folding (v1.28.0) | v1.11.0 |
+| `kb_graph.py` | plain `python3` (pure stdlib) | On-demand link graph: `stats` / `neighborhood` / `path` / `lineage` / `link-add` / deterministic `lint`; `union-recover` for append-only files diverged across checkouts (v1.23.0); `near-pairs` reads the search index (needs `sqlite_vec`, v1.28.0) | v1.15.0 |
+| `hooks/lib/config.py` | plain `python3` (pure stdlib) | `.claude/ccmemo.json` loader: index scope, extensions, include / exclude globs, size cap, `corpora` kind rules — the one place a repository describes its own layout; ccmemo itself knows only the knowledge root | v1.28.0 |
+| `hooks/lib/repo.py` | plain `python3` (pure stdlib) | Repository resolution through git: toplevel, main checkout (`--git-common-dir`), linked-worktree detection, `git ls-files` candidate set — shared by the index, the search and the graph CLI so all three agree on where the index lives | v1.28.0 |
 | `hooks/lib/frontmatter.py` | plain `python3` (pure stdlib) | The one frontmatter parser every reader imports (both scripts above, `regenerate-tag-registry.py`, the UserPromptSubmit hook via its CLI): YAML subset, normalized view — `tags` always a `#tag` list from either form, missing `status` → `active` | v1.24.0 |
 
 How the skills reach them:

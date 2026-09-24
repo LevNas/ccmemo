@@ -21,7 +21,9 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "${REPO_ROOT}" ] || exit 0
 
 KB_ROOT="${CCMEMO_KB_ROOT:-${REPO_ROOT}/.claude/knowledge/entries}"
-KB_INDEX="${CCMEMO_KB_INDEX:-${REPO_ROOT}/.claude/skills/.scripts/kb_index.py}"
+# The indexer script (CCMEMO_KB_INDEX names the index *file* for kb_index.py /
+# kb_search.py since 1.28, so the script path has its own variable).
+KB_INDEX="${CCMEMO_KB_INDEXER:-${REPO_ROOT}/.claude/skills/.scripts/kb_index.py}"
 
 # Fallbacks for common install layouts (plugin vs. manual copy).
 if [ ! -f "${KB_INDEX}" ]; then

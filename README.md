@@ -60,7 +60,9 @@ A step-by-step version of this Quick start — repository layout, user-scope
 install, team enablement — is [docs/getting-started.md](docs/getting-started.md).
 Installing without the marketplace and scaffolding by shell command are covered
 in [docs/usage.md](docs/usage.md). Semantic search via `/recall-knowledge` is
-opt-in (one-time index build) — see [docs/hybrid-search.md](docs/hybrid-search.md).
+opt-in (one-time index build) — see [docs/hybrid-search.md](docs/hybrid-search.md);
+a repository can extend that index to every document it contains
+(`scope: repo` in `.claude/ccmemo.json`, same page).
 
 ## Examples
 

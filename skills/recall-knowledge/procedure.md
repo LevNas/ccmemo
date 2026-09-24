@@ -5,12 +5,15 @@ subagents are sandboxed and cannot run `uv` / Python). On-demand only.
 
 ## Inputs
 - `query` — the search text (required)
-- Optional filters: `status`, `tag` (repeatable), `type`, `created-from`, `created-to`, `top` (N)
+- Optional filters: `status`, `tag` (repeatable), `type`, `kind` (repeatable), `created-from`, `created-to`, `top` (N)
 
 ## Step 1. Resolve paths
 - `KB_ROOT` = `{project_root}/.claude/knowledge/entries`
 - `SEARCH`  = `{plugin_root}/scripts/kb_search.py`
-- `INDEX`   = `{project_root}/.claude/knowledge/.index/kb.db`
+- `INDEX`   = `{project_root}/.claude/knowledge/.index/kb.db` — in the **main checkout**.
+  From a linked git worktree the scripts resolve that same file themselves (read-only,
+  no refresh) — do not look for an index inside the worktree, and do not set
+  `CCMEMO_KB_INDEX` just to search from one.
 - `BUILDER` = `{plugin_root}/scripts/kb_index.py` (referenced only when advising a build)
 - `GRAPH`   = `{plugin_root}/scripts/kb_graph.py` (pure stdlib — works without `uv` or `INDEX`)
 
@@ -27,9 +30,17 @@ Run from Bash (main agent):
 
 ```bash
 uv run "{plugin_root}/scripts/kb_search.py" "{KB_ROOT}" "<query>" --summary --top 10 \
-  [--status active] [--tag '#sometag'] [--type knowledge] \
+  [--status active] [--tag '#sometag'] [--type knowledge] [--kind kb|docs] \
   [--created-from YYYY-MM-DD] [--created-to YYYY-MM-DD] [--verified machine|human] [--json]
 ```
+
+Every hit carries its corpus kind in brackets after the title — `[kb]` for a
+knowledge entry. When the repository has opted in to `scope: repo`
+(`.claude/ccmemo.json`), other documents in the repository appear too, as
+`[docs]` or a kind the repository declares; `--kind kb` keeps the search to the
+knowledge base, `--kind docs` to the rest. Kind never affects ranking. A hit
+folded from several identical files (or several copies of one entry) lists the
+other paths on an `also:` line — one result, several locations.
 
 Start with `--summary`: per hit it prints the title, the `description` (when
 to open the entry) and the typed links with their labels, in ~700 bytes per
