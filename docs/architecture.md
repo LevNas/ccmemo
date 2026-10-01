@@ -75,13 +75,15 @@ phrases its instructions.
 
 ## Context Guard (since v1.1.0)
 
-Prevents knowledge loss during context compaction with a three-stage defense:
+Prevents knowledge loss during context compaction with a three-stage defense,
+plus a fourth stage that brings the saved state back afterwards (since v1.29.0):
 
 | Stage | Event | Role | Can Block? |
 |-------|-------|------|------------|
 | 1st | PostToolUse | Appends file changes to active task's `context-*.md` | NO (side effect) |
 | 2nd | Stop | Prompts `/record-knowledge` when context grows large | YES |
 | 3rd | PreCompact | Saves checkpoint of modified files & decisions | NO (side effect) |
+| 4th | SessionStart (`compact`) | Restores that checkpoint and `session_state.md` into context | NO (adds context) |
 
 **Stage 1 (PostToolUse hook):** Every time Write or Edit modifies a file, the change
 is automatically appended to the active task's `context-*.md` file. This provides
@@ -101,7 +103,19 @@ canonical subagent recording flow leaves no Write call at all.
 to `.claude/context-checkpoints/` with modified file paths and user decisions extracted
 from the transcript tail.
 
-**Agent worktrees:** Stages 1 and 3 skip capture when the session runs inside a
+**Stage 4 (SessionStart hook, matcher `compact`):** PreCompact cannot add
+context, and its `systemMessage` reaches the user only, so stage 3 alone saves
+state the model never sees. SessionStart with source `compact` fires right
+after auto or manual compaction and its `additionalContext` does reach the
+model. `sessionstart_compact_restore.py` reads back the newest checkpoint whose
+`session_id` matches the session, and the active task's `session_state.md`
+with its `updated:` time, framed as notes rather than instructions. The
+payload stays under 8,000 characters (the harness caps `additionalContext` at
+10,000); a section that does not fit ends with the path to read. It is
+read-only, so `/plan-task` still consumes the checkpoints as below. Opt out
+with `CCMEMO_COMPACT_RESTORE=0`.
+
+**Agent worktrees:** Stages 1 and 3 skip capture (and stage 4 restores nothing) when the session runs inside a
 harness-generated agent isolation worktree (`.claude/worktrees/agent-<hex>` or
 `wf_<runId>-<n>`) — captures written there are misattributed and die with the
 worktree. Detection matches only the harness naming convention, so user-named
@@ -170,6 +184,10 @@ session start or after compaction:
 2. Integrate modified file lists and user decisions into the active task's `context-*.md`
 3. If a checkpoint contains knowledge-worthy findings, invoke `/record-knowledge`
 4. Delete consumed checkpoint files
+
+Within the session that compacted, stage 4 has already put the newest
+checkpoint back into context; `/plan-task` remains the step that merges
+checkpoints into the task record and deletes them.
 
 The `.claude/context-checkpoints/` directory is created on-demand when the first
 compaction occurs — it does not exist until then.

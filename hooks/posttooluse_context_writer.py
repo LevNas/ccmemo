@@ -11,50 +11,14 @@ Skips if no active task is found.
 
 import json
 import os
-import re
 import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.agent_worktree import capture_suppressed  # noqa: E402
 from lib.checkout_id import checkout_id, suffix_enabled  # noqa: E402
+from lib.tasks import find_active_task_dir  # noqa: E402
 
-
-def find_active_task_dir(cwd: str) -> str | None:
-    """Find the first active task directory from .claude/tasks/readme.md."""
-    readme_path = os.path.join(cwd, ".claude", "tasks", "readme.md")
-    if not os.path.isfile(readme_path):
-        return None
-
-    try:
-        with open(readme_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except OSError:
-        return None
-
-    # Look for active task entries in the table
-    # Format: | `dir_name/` | ... | status | ... |
-    # Match directories in the Active section
-    in_active = False
-    for line in content.splitlines():
-        if line.strip().startswith("## Active"):
-            in_active = True
-            continue
-        if line.strip().startswith("## Completed"):
-            in_active = False
-            continue
-        if not in_active:
-            continue
-
-        # Match directory names in table rows
-        match = re.search(r"`([^`]+/)`", line)
-        if match:
-            dir_name = match.group(1)
-            task_dir = os.path.join(cwd, ".claude", "tasks", dir_name)
-            if os.path.isdir(task_dir):
-                return task_dir
-
-    return None
 
 
 def get_or_create_context_file(task_dir: str, cwd: str | None = None) -> str:

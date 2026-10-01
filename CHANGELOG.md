@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.29.0] - 2026-10-01
+
+Working state comes back after compaction (#54). The PreCompact hook has
+always saved a checkpoint and the active task's `session_state.md`, but
+nothing read them back: PreCompact cannot add context and its
+`systemMessage` is shown to the user only. No action needed
+(`docs/upgrading.md`, 1.29).
+
+### Added
+- `hooks/sessionstart_compact_restore.py`, registered as a separate
+  `SessionStart` entry with matcher `compact`: right after auto or manual
+  compaction it adds the newest checkpoint whose `session_id` matches the
+  session, and the active task's `session_state.md` with its `updated:`
+  time, as `hookSpecificOutput.additionalContext`, framed as notes rather
+  than instructions. Under 8,000 characters (the harness caps
+  `additionalContext` at 10,000); a section that does not fit ends with the
+  path to read. Read-only, so `/plan-task` still consumes checkpoints.
+  Silent without a checkpoint or an active task, for any other source,
+  inside harness agent worktrees, and with `CCMEMO_COMPACT_RESTORE=0`.
+- `hooks/lib/tasks.py`: `find_active_task_dir()`, previously copied into the
+  PreCompact and PostToolUse context hooks, now shared by them and the
+  restore hook.
+- `tests/test_compact_restore.py`: 25 checks, including an end-to-end run of
+  the PreCompact hook followed by the restore hook.
+
+### Changed
+- PreCompact `systemMessage` no longer tells the model to "read
+  session_state.md on resume" (the model never saw it) and the in-code claim
+  that it "may be included in compaction summary" is gone; the message now
+  reports the counts and that ccmemo restores the state after compaction.
+
 ## [1.28.0] - 2026-09-24
 
 Multi-corpus index (#49): the search index can cover the whole repository,

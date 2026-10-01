@@ -7,7 +7,8 @@ discards tool output.
 
 Saves checkpoints to .claude/context-checkpoints/.
 Also updates session_state.md in the active task directory for fast
-session recovery.
+session recovery. Both are read back into context right after compaction
+by sessionstart_compact_restore.py.
 """
 
 import json
@@ -19,6 +20,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import autocommit  # noqa: E402
 from lib.agent_worktree import capture_suppressed  # noqa: E402
+from lib.tasks import find_active_task_dir  # noqa: E402
 
 
 def extract_modified_files(lines: list[str]) -> list[str]:
@@ -98,38 +100,6 @@ def extract_user_decisions(lines: list[str]) -> list[str]:
             unique.append(d)
     return unique[:10]
 
-
-def find_active_task_dir(cwd: str) -> str | None:
-    """Find the first active task directory from .claude/tasks/readme.md."""
-    readme_path = os.path.join(cwd, ".claude", "tasks", "readme.md")
-    if not os.path.isfile(readme_path):
-        return None
-
-    try:
-        with open(readme_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except OSError:
-        return None
-
-    in_active = False
-    for line in content.splitlines():
-        if line.strip().startswith("## Active"):
-            in_active = True
-            continue
-        if line.strip().startswith("## Completed"):
-            in_active = False
-            continue
-        if not in_active:
-            continue
-
-        match = re.search(r"`([^`]+/)`", line)
-        if match:
-            dir_name = match.group(1)
-            task_dir = os.path.join(cwd, ".claude", "tasks", dir_name)
-            if os.path.isdir(task_dir):
-                return task_dir
-
-    return None
 
 
 def read_todo_progress(task_dir: str) -> str:
@@ -304,22 +274,20 @@ def main() -> None:
     if task_dir:
         update_session_state(task_dir, user_decisions, modified_files)
 
-    # Output system message (may be included in compaction summary)
-    knowledge_note = ""
-    if referenced_knowledge:
-        knowledge_note = (
-            " Re-read these knowledge entries: "
-            + ", ".join(referenced_knowledge)
-        )
+    # systemMessage is shown to the user only; the model never sees it, and
+    # PreCompact cannot add context. The checkpoint and session_state.md
+    # reach the model through sessionstart_compact_restore.py (SessionStart,
+    # matcher "compact"), which reads them back right after compaction.
     state_note = ""
     if task_dir:
         state_note = f" Session state updated: {task_dir}/session_state.md."
     result = {
         "systemMessage": (
             f"Context checkpoint saved: {checkpoint_path} "
-            f"({len(modified_files)} files, {len(user_decisions)} decisions)."
-            f"{knowledge_note}{state_note}{commit_note}"
-            " On resume: run TaskList, then read session_state.md for quick recovery."
+            f"({len(modified_files)} files, {len(user_decisions)} decisions,"
+            f" {len(referenced_knowledge)} knowledge entries)."
+            f"{state_note}{commit_note}"
+            " ccmemo restores it into context after compaction."
         )
     }
     print(json.dumps(result, ensure_ascii=False))
