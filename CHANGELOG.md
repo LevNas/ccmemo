@@ -24,8 +24,22 @@ nothing read them back: PreCompact cannot add context and its
 - `hooks/lib/tasks.py`: `find_active_task_dir()`, previously copied into the
   PreCompact and PostToolUse context hooks, now shared by them and the
   restore hook.
-- `tests/test_compact_restore.py`: 25 checks, including an end-to-end run of
-  the PreCompact hook followed by the restore hook.
+- `tests/test_compact_restore.py`: 34 checks, including end-to-end runs of
+  the PreCompact hook followed by the restore hook on transcripts in Claude
+  Code's real shape.
+
+### Fixed
+- PreCompact never extracted a user decision from a real transcript: it read
+  a top-level `content` field, while Claude Code nests each turn under
+  `message`. It now reads `message.content` (keeping the top-level shape),
+  uses text blocks only (tool results share the `user` type), and skips
+  hook feedback (`isMeta`), the compaction summary and harness notices that
+  start with a tag (`<task-notification>` …).
+- Decisions are taken from the whole transcript, not the 200-line tail, which
+  in a long session is all tool traffic; the cap keeps the newest ten (five
+  in `session_state.md`) instead of the oldest.
+- The restore hook puts a checkpoint's decisions and referenced knowledge
+  before its file list, so a long file list is what gets truncated.
 
 ### Changed
 - PreCompact `systemMessage` no longer tells the model to "read

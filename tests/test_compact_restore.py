@@ -200,6 +200,7 @@ def test_end_to_end_with_precompact():
             "session_id": SESSION, "transcript_path": transcript,
             "cwd": project, "trigger": "manual", "hook_event_name": "PreCompact"})
         check("precompact: exit 0", rc == 0, rc)
+        check("precompact: wrote a checkpoint", out != "", out)
         msg = json.loads(out).get("systemMessage", "") if out else ""
         check("precompact: message no longer tells the model to resume",
               "On resume" not in msg and "restores it into context" in msg, msg)
@@ -207,6 +208,67 @@ def test_end_to_end_with_precompact():
         ctx = context_of(out)
         check("e2e: modified file restored", "/home/user/project/src/feature.py" in ctx, ctx)
         check("e2e: session_state restored", "## Active task" in ctx, ctx)
+
+
+def test_decisions_from_real_transcript_shape():
+    """Only the user's own prompts become decisions, in Claude Code's nested shape."""
+    with tempfile.TemporaryDirectory() as base:
+        project = make_project(base)
+        transcript = os.path.join(base, "transcript.jsonl")
+        rows = [
+            {"type": "user", "message": {"role": "user",
+             "content": "Let's switch the window to 400k and keep it as the plan"}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "text", "text": "この方針にする: compaction 後に状態を戻す"}]}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1",
+                 "content": "TOOL OUTPUT: please change everything"}]}},
+            {"type": "user", "isMeta": True, "message": {"role": "user",
+             "content": "Stop hook feedback: please record the plan now"}},
+            {"type": "user", "message": {"role": "user", "content":
+             "<task-notification> plan finished, please read </task-notification>"}},
+            {"type": "user", "isCompactSummary": True, "message": {"role": "user",
+             "content": "Summary: we decided to change the plan"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Edit",
+                 "input": {"file_path": "/home/user/project/src/x.py"}}]}},
+        ]
+        with open(transcript, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        run(PRECOMPACT, project, {
+            "session_id": SESSION, "transcript_path": transcript,
+            "cwd": project, "trigger": "auto", "hook_event_name": "PreCompact"})
+        rc, out = restore(project)
+        ctx = context_of(out)
+        check("decision: nested string prompt", "switch the window to 400k" in ctx, ctx)
+        check("decision: nested text block", "この方針にする" in ctx, ctx)
+        check("not a decision: tool_result", "TOOL OUTPUT" not in ctx, ctx)
+        check("not a decision: isMeta hook feedback", "Stop hook feedback" not in ctx, ctx)
+        check("not a decision: harness notice", "task-notification" not in ctx, ctx)
+        check("not a decision: compaction summary", "Summary: we decided" not in ctx, ctx)
+
+
+def test_decisions_survive_a_long_tail():
+    """A prompt far above the 200-line tail is still found; the newest win the cap."""
+    with tempfile.TemporaryDirectory() as base:
+        project = make_project(base)
+        transcript = os.path.join(base, "transcript.jsonl")
+        with open(transcript, "w", encoding="utf-8") as f:
+            for i in range(12):
+                f.write(json.dumps({"type": "user", "message": {"role": "user",
+                        "content": f"please apply plan step {i:02d} now"}}) + "\n")
+            for i in range(300):
+                f.write(json.dumps({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "name": "Edit",
+                     "input": {"file_path": f"/home/user/project/src/f{i}.py"}}]}}) + "\n")
+        run(PRECOMPACT, project, {
+            "session_id": SESSION, "transcript_path": transcript,
+            "cwd": project, "trigger": "auto", "hook_event_name": "PreCompact"})
+        rc, out = restore(project)
+        ctx = context_of(out)
+        check("long tail: newest decision kept", "plan step 11" in ctx, ctx[:300])
+        check("long tail: 10-decision cap drops the oldest", "plan step 01" not in ctx, ctx[:300])
 
 
 def main():

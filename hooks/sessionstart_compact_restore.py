@@ -86,6 +86,32 @@ def latest_checkpoint(cwd: str, session_id: str) -> str | None:
     return None
 
 
+def decisions_first(body: str) -> str:
+    """Reorder a checkpoint's `## ` sections so the short, valuable ones come first.
+
+    A checkpoint lists Modified Files first, and in a long session that list
+    alone can fill the section budget and cut off the user's decisions. The
+    file list goes last, where truncation costs least.
+    """
+    head, *parts = body.split("\n## ")
+    if not parts:
+        return body
+    sections = ["## " + p if not p.startswith("## ") else p for p in parts]
+    if head.startswith("## "):
+        sections.insert(0, head)
+        head = ""
+
+    def rank(section: str) -> int:
+        title = section.splitlines()[0]
+        for i, key in enumerate(("User Decisions", "Referenced Knowledge")):
+            if key in title:
+                return i
+        return 2 if "Modified Files" not in title else 3
+
+    ordered = sorted(sections, key=rank)  # stable: unknown sections keep their order
+    return "\n".join(s.rstrip("\n") + "\n" for s in ([head] if head.strip() else []) + ordered)
+
+
 def clip(text: str, limit: int, path: str) -> str:
     """Cut text to limit characters, pointing at the file for the rest."""
     text = text.strip()
@@ -107,7 +133,7 @@ def build_context(cwd: str, session_id: str) -> str:
             sections.append(
                 f"## Checkpoint `{rel}` (saved {meta.get('created', '?')},"
                 f" trigger {meta.get('trigger', '?')})\n\n"
-                + clip(body, SECTION_CHARS, rel)
+                + clip(decisions_first(body), SECTION_CHARS, rel)
             )
 
     task_dir = find_active_task_dir(cwd)

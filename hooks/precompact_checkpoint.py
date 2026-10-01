@@ -56,25 +56,44 @@ def extract_user_decisions(lines: list[str]) -> list[str]:
         except (json.JSONDecodeError, ValueError):
             continue
 
+        if not isinstance(entry, dict):
+            continue
+
         # Look for user messages (role: "user" or type: "human")
         role = entry.get("role", "")
         msg_type = entry.get("type", "")
         if role not in ("user", "human") and msg_type not in ("user", "human"):
             continue
 
-        # Extract text content
-        content = entry.get("content", "")
+        # Hook feedback (isMeta) and the compaction summary are not the
+        # user's words.
+        if entry.get("isMeta") or entry.get("isCompactSummary"):
+            continue
+
+        # Claude Code transcripts nest the turn under "message"; older and
+        # synthetic shapes put "content" at the top level.
+        message = entry.get("message")
+        if isinstance(message, dict) and "content" in message:
+            content = message["content"]
+        else:
+            content = entry.get("content", "")
         if isinstance(content, list):
-            # Handle structured content blocks
+            # Text blocks only: tool_result blocks share the "user" type but
+            # carry tool output, never the user's decisions.
             texts = []
             for block in content:
-                if isinstance(block, dict):
+                if isinstance(block, dict) and block.get("type", "text") == "text":
                     text = block.get("text", "")
                     if text:
                         texts.append(text)
             content = " ".join(texts)
 
         if not isinstance(content, str) or len(content) < 10:
+            continue
+
+        # Harness notices (<task-notification>, <command-name>, …) arrive as
+        # user turns that start with a tag.
+        if content.lstrip().startswith("<"):
             continue
 
         # Heuristic: lines with decision-like keywords
@@ -91,14 +110,14 @@ def extract_user_decisions(lines: list[str]) -> list[str]:
             if snippet:
                 decisions.append(snippet)
 
-    # Deduplicate and limit
+    # Deduplicate and keep the most recent ten, oldest first
     seen = set()
     unique = []
     for d in decisions:
         if d not in seen:
             seen.add(d)
             unique.append(d)
-    return unique[:10]
+    return unique[-10:]
 
 
 
@@ -161,7 +180,7 @@ def update_session_state(
 
     if user_decisions:
         lines.append("## Key Decisions This Session")
-        for d in user_decisions[:5]:
+        for d in user_decisions[-5:]:
             lines.append(f"- {d}")
         lines.append("")
 
@@ -218,7 +237,9 @@ def main() -> None:
 
     # Extract information
     modified_files = extract_modified_files(tail_lines)
-    user_decisions = extract_user_decisions(tail_lines)
+    # Decisions come from the whole transcript: in a long session the tail
+    # is almost all tool traffic and holds no user prompt.
+    user_decisions = extract_user_decisions(all_lines)
     referenced_knowledge = extract_referenced_knowledge(tail_lines)
 
     # Skip if nothing meaningful to checkpoint
