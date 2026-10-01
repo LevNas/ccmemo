@@ -128,6 +128,65 @@ def test_ignores_non_target_files():
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def test_staged_non_target_stays_staged():
+    """The user's staged work outside the target paths is never swept in."""
+    repo = _make_repo()
+    try:
+        _seed(repo)
+        _write(repo, "src/feature.lua", "user work in progress")
+        _git(repo, "add", "src/feature.lua")  # staged by the user, not committed
+        _write(repo, ".claude/knowledge/entries/foo.md", "body")
+        with _env(CCMEMO_AUTOCOMMIT="1", CCMEMO_AUTOCOMMIT_ON_LEAK=None):
+            res = autocommit.run(repo, "PreCompact")
+        assert res.status == "committed", res
+        committed = _git(repo, "show", "--name-only", "--format=", "HEAD").stdout.split()
+        assert committed == [".claude/knowledge/entries/foo.md"], committed
+        staged = _git(repo, "diff", "--cached", "--name-only").stdout.split()
+        assert staged == ["src/feature.lua"], f"user's staged file must stay staged: {staged}"
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_rename_and_delete_are_committed():
+    """Path-limited commits still record deletions and both sides of a rename."""
+    repo = _make_repo()
+    try:
+        _seed(repo)
+        _write(repo, ".claude/knowledge/entries/old.md", "moving")
+        _write(repo, ".claude/tasks/t/todo.md", "- [ ] gone soon")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "seed knowledge")
+        _git(repo, "mv", ".claude/knowledge/entries/old.md", ".claude/knowledge/entries/new.md")
+        os.remove(os.path.join(repo, ".claude/tasks/t/todo.md"))
+        with _env(CCMEMO_AUTOCOMMIT="1", CCMEMO_AUTOCOMMIT_ON_LEAK=None):
+            res = autocommit.run(repo, "SessionEnd")
+        assert res.status == "committed", res
+        status = _git(repo, "status", "--porcelain").stdout.strip()
+        assert status == "", f"rename and delete must both be committed: {status!r}"
+        tree = _git(repo, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
+        assert ".claude/knowledge/entries/new.md" in tree and ".claude/knowledge/entries/old.md" not in tree, tree
+        assert ".claude/tasks/t/todo.md" not in tree, tree
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_whole_target_directory_removed():
+    """Deleting every tracked file under a target (the directory is gone) still commits."""
+    repo = _make_repo()
+    try:
+        _seed(repo)
+        _write(repo, ".claude/tasks/t/todo.md", "- [x] done")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "seed tasks")
+        shutil.rmtree(os.path.join(repo, ".claude"))
+        with _env(CCMEMO_AUTOCOMMIT="1", CCMEMO_AUTOCOMMIT_ON_LEAK=None):
+            res = autocommit.run(repo, "SessionEnd")
+        assert res.status == "committed", res
+        assert _git(repo, "status", "--porcelain").stdout.strip() == "", "deletion must be committed"
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def test_clean_is_noop():
     repo = _make_repo()
     try:

@@ -24,8 +24,10 @@ from dataclasses import dataclass, field
 
 from . import leak_scan
 
-# Only these paths are ever staged. `git add -A` is deliberately never used so
-# unrelated working-tree changes can never be swept into a safety-net commit.
+# Only these paths are ever staged or committed. `git add -A` runs with these
+# paths as its pathspec, and the commit is limited to them too, so unrelated
+# changes — unstaged or already staged by the user — never reach a safety-net
+# commit.
 TARGET_PATHS = (".claude/knowledge", ".claude/tasks")
 
 _ENABLE_ENV = "CCMEMO_AUTOCOMMIT"
@@ -132,6 +134,15 @@ def _scan_files(cwd: str, paths: list[str]) -> list[tuple[str, "leak_scan.Findin
     return findings
 
 
+def _existing_targets(cwd: str) -> list[str]:
+    """Target paths git can match: present on disk, or still tracked (deleted on disk)."""
+    targets = []
+    for p in TARGET_PATHS:
+        if os.path.exists(os.path.join(cwd, p)) or _git(cwd, "ls-files", "--", p).stdout.strip():
+            targets.append(p)
+    return targets
+
+
 def _short_name(path: str) -> str:
     """Last two path segments — enough to tell entries/foo.md from taskdir/todo.md."""
     parts = path.replace("\\", "/").rstrip("/").split("/")
@@ -175,14 +186,21 @@ def run(cwd: str, trigger: str) -> CommitResult:
     if findings and mode != "warn":
         return CommitResult("blocked", f"leak-scan: {len(findings)} finding(s)", files, findings)
 
-    add = _git(cwd, "add", "--", *files)
+    # Stage and commit by target directory, not by listed file: a rename staged
+    # with `git mv` lists an old path that exists neither on disk nor in the
+    # index, and `git add -- <old path>` fails. `add -A -- <dir>` stages exactly
+    # what the porcelain status above reported.
+    targets = _existing_targets(cwd)
+    add = _git(cwd, "add", "-A", "--", *targets)
     if add.returncode != 0:
         return CommitResult("error", f"git add failed: {add.stderr.strip()}", files, findings)
 
     # No --no-verify: an existing pre-commit hook is respected (it is a second,
     # legitimate gate). If it blocks, the auto-commit legitimately fails.
+    # The pathspec makes this an --only commit: changes the user staged outside
+    # the target paths stay staged and are never swept into the checkpoint.
     msg = _build_message(files, trigger)
-    commit = _git(cwd, "commit", "-F", "-", input_text=msg)
+    commit = _git(cwd, "commit", "-F", "-", "--", *targets, input_text=msg)
     if commit.returncode != 0:
         return CommitResult("error", f"git commit failed: {commit.stderr.strip()}", files, findings)
     return CommitResult("committed", trigger, files, findings)
