@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.29.1] - 2026-10-01
+
+Opt-in auto-commit (`CCMEMO_AUTOCOMMIT=1`) fixes. Nothing to do; only users
+who enabled auto-commit are affected.
+
+### Fixed
+- The safety-net commit swept in files the user had staged outside
+  `.claude/knowledge` and `.claude/tasks`: staging was limited to the target
+  paths, but `git commit` took the whole index. The commit now carries the
+  target paths as its pathspec (an `--only` commit), so the user's staged
+  work stays staged and out of the checkpoint.
+- A rename staged with `git mv` under a target path made the auto-commit fail
+  (`git add -- <old path>`: pathspec did not match). Staging now runs
+  `git add -A` over the target directories that exist on disk or are still
+  tracked, which records deletions and both sides of a rename.
+- `tests/test_autocommit.py`: staged non-target file stays staged; rename and
+  delete are committed; a target directory removed entirely is committed.
+
 ## [1.29.0] - 2026-10-01
 
 Working state comes back after compaction (#54). The PreCompact hook has
