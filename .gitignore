@@ -1,4 +1,6 @@
-.claude/
+# Session state under .claude/ stays local; only the shared project settings are tracked.
+.claude/*
+!.claude/settings.json
 
 # Python bytecode from scripts/ (kb_index.py / kb_search.py)
 __pycache__/
