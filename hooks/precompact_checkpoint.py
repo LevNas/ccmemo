@@ -7,7 +7,8 @@ discards tool output.
 
 Saves checkpoints to .claude/context-checkpoints/.
 Also updates session_state.md in the active task directory for fast
-session recovery.
+session recovery. Both are read back into context right after compaction
+by sessionstart_compact_restore.py.
 """
 
 import json
@@ -19,6 +20,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import autocommit  # noqa: E402
 from lib.agent_worktree import capture_suppressed  # noqa: E402
+from lib.tasks import find_active_task_dir  # noqa: E402
 
 
 def extract_modified_files(lines: list[str]) -> list[str]:
@@ -54,25 +56,44 @@ def extract_user_decisions(lines: list[str]) -> list[str]:
         except (json.JSONDecodeError, ValueError):
             continue
 
+        if not isinstance(entry, dict):
+            continue
+
         # Look for user messages (role: "user" or type: "human")
         role = entry.get("role", "")
         msg_type = entry.get("type", "")
         if role not in ("user", "human") and msg_type not in ("user", "human"):
             continue
 
-        # Extract text content
-        content = entry.get("content", "")
+        # Hook feedback (isMeta) and the compaction summary are not the
+        # user's words.
+        if entry.get("isMeta") or entry.get("isCompactSummary"):
+            continue
+
+        # Claude Code transcripts nest the turn under "message"; older and
+        # synthetic shapes put "content" at the top level.
+        message = entry.get("message")
+        if isinstance(message, dict) and "content" in message:
+            content = message["content"]
+        else:
+            content = entry.get("content", "")
         if isinstance(content, list):
-            # Handle structured content blocks
+            # Text blocks only: tool_result blocks share the "user" type but
+            # carry tool output, never the user's decisions.
             texts = []
             for block in content:
-                if isinstance(block, dict):
+                if isinstance(block, dict) and block.get("type", "text") == "text":
                     text = block.get("text", "")
                     if text:
                         texts.append(text)
             content = " ".join(texts)
 
         if not isinstance(content, str) or len(content) < 10:
+            continue
+
+        # Harness notices (<task-notification>, <command-name>, …) arrive as
+        # user turns that start with a tag.
+        if content.lstrip().startswith("<"):
             continue
 
         # Heuristic: lines with decision-like keywords
@@ -89,47 +110,15 @@ def extract_user_decisions(lines: list[str]) -> list[str]:
             if snippet:
                 decisions.append(snippet)
 
-    # Deduplicate and limit
+    # Deduplicate and keep the most recent ten, oldest first
     seen = set()
     unique = []
     for d in decisions:
         if d not in seen:
             seen.add(d)
             unique.append(d)
-    return unique[:10]
+    return unique[-10:]
 
-
-def find_active_task_dir(cwd: str) -> str | None:
-    """Find the first active task directory from .claude/tasks/readme.md."""
-    readme_path = os.path.join(cwd, ".claude", "tasks", "readme.md")
-    if not os.path.isfile(readme_path):
-        return None
-
-    try:
-        with open(readme_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except OSError:
-        return None
-
-    in_active = False
-    for line in content.splitlines():
-        if line.strip().startswith("## Active"):
-            in_active = True
-            continue
-        if line.strip().startswith("## Completed"):
-            in_active = False
-            continue
-        if not in_active:
-            continue
-
-        match = re.search(r"`([^`]+/)`", line)
-        if match:
-            dir_name = match.group(1)
-            task_dir = os.path.join(cwd, ".claude", "tasks", dir_name)
-            if os.path.isdir(task_dir):
-                return task_dir
-
-    return None
 
 
 def read_todo_progress(task_dir: str) -> str:
@@ -191,7 +180,7 @@ def update_session_state(
 
     if user_decisions:
         lines.append("## Key Decisions This Session")
-        for d in user_decisions[:5]:
+        for d in user_decisions[-5:]:
             lines.append(f"- {d}")
         lines.append("")
 
@@ -248,7 +237,9 @@ def main() -> None:
 
     # Extract information
     modified_files = extract_modified_files(tail_lines)
-    user_decisions = extract_user_decisions(tail_lines)
+    # Decisions come from the whole transcript: in a long session the tail
+    # is almost all tool traffic and holds no user prompt.
+    user_decisions = extract_user_decisions(all_lines)
     referenced_knowledge = extract_referenced_knowledge(tail_lines)
 
     # Skip if nothing meaningful to checkpoint
@@ -304,22 +295,20 @@ def main() -> None:
     if task_dir:
         update_session_state(task_dir, user_decisions, modified_files)
 
-    # Output system message (may be included in compaction summary)
-    knowledge_note = ""
-    if referenced_knowledge:
-        knowledge_note = (
-            " Re-read these knowledge entries: "
-            + ", ".join(referenced_knowledge)
-        )
+    # systemMessage is shown to the user only; the model never sees it, and
+    # PreCompact cannot add context. The checkpoint and session_state.md
+    # reach the model through sessionstart_compact_restore.py (SessionStart,
+    # matcher "compact"), which reads them back right after compaction.
     state_note = ""
     if task_dir:
         state_note = f" Session state updated: {task_dir}/session_state.md."
     result = {
         "systemMessage": (
             f"Context checkpoint saved: {checkpoint_path} "
-            f"({len(modified_files)} files, {len(user_decisions)} decisions)."
-            f"{knowledge_note}{state_note}{commit_note}"
-            " On resume: run TaskList, then read session_state.md for quick recovery."
+            f"({len(modified_files)} files, {len(user_decisions)} decisions,"
+            f" {len(referenced_knowledge)} knowledge entries)."
+            f"{state_note}{commit_note}"
+            " ccmemo restores it into context after compaction."
         )
     }
     print(json.dumps(result, ensure_ascii=False))

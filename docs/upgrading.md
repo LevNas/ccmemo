@@ -19,8 +19,9 @@ choose to. Most updates need nothing from you.
 
 | You are updating from | What to read |
 |---|---|
-| 1.28.0 or later | Nothing to do. |
-| 1.27.x | Nothing to do. [1.28: the index can cover the whole repository](#128-the-index-can-cover-the-whole-repository) describes an opt-in and two things you may notice. |
+| 1.29.0 or later | Nothing to do. |
+| 1.28.x | Nothing to do. [1.29: working state comes back after compaction](#129-working-state-comes-back-after-compaction) describes one thing you may notice. |
+| 1.27.x | Nothing to do. The section above, plus [1.28: the index can cover the whole repository](#128-the-index-can-cover-the-whole-repository), which describes an opt-in and two things you may notice. |
 | 1.26.x | The section above, plus [1.27: entry ids and verification](#127-entry-ids-and-verification). One command plus one line; nothing breaks if you skip it. |
 | 1.25.x or 1.24.x | The sections above, plus [1.26: descriptions and link labels](#126-descriptions-and-link-labels). Optional work; nothing breaks if you skip it. |
 | 1.23.x or older | All sections above, plus [1.24: tags and status](#124-tags-and-status). No work needed there, but two behaviours change. |
@@ -52,6 +53,32 @@ Until you do, the lint still lists what the new rules would report, but
 under a heading marked *advisory*, and the exit code stays 0. A pre-commit
 hook therefore keeps passing after an update. When you want to try the new
 rules before committing to them, run `kb_graph.py --schema 2 lint`.
+
+## 1.29: working state comes back after compaction
+
+### Do I need to do anything?
+
+No. There is nothing to migrate and no setting to add.
+
+### What changed
+
+Before compaction, ccmemo has always saved a checkpoint (the files you
+changed, decisions you stated, knowledge entries you read) and the active
+task's `session_state.md`. Until now nothing brought them back: the notice
+the save printed was shown to you, not to Claude. From 1.29 a new
+`SessionStart` hook, registered for compaction only, reads both files right
+after compaction and adds them to Claude's context.
+
+### What you may notice
+
+After a compaction, Claude knows which files it was editing and which task
+it was on without being told again. The restored text is short (under 8,000
+characters); longer files are cut, with the path to read the rest. Only a
+checkpoint saved by the same session is restored. Nothing happens when the
+session has no checkpoint and no active task.
+
+To turn it off, set `CCMEMO_COMPACT_RESTORE=0`, for example in the `env`
+block of your settings.
 
 ## 1.28: the index can cover the whole repository
 

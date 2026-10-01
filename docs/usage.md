@@ -125,6 +125,10 @@ entries before starting work. Patterns and examples:
   to commit with a warning instead). It complements — does not replace — your
   manual end-of-session commit, so it is a no-op when you have already
   committed.
+- **Restore after compaction (on by default)** — right after a compaction, a
+  `SessionStart` hook (matcher `compact`) adds the session's latest
+  checkpoint and the active task's `session_state.md` to Claude's context,
+  under 8,000 characters. Set `CCMEMO_COMPACT_RESTORE=0` to turn it off.
 - **Redact hook `op://` handling** — the entry redact hook masks every
   `op://` reference (1Password secret-reference URIs; inert for knowledge
   bases that do not use 1Password) by default. Set `CCMEMO_REDACT_OP_REF=keep-names` to keep
