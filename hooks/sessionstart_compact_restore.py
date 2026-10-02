@@ -3,15 +3,16 @@
 
 The PreCompact hook saves a checkpoint (`.claude/context-checkpoints/`) and
 the active task's `session_state.md`, but PreCompact cannot add context and
-its `systemMessage` is shown to the user only. SessionStart with source
+the harness discards its `systemMessage`. SessionStart with source
 `compact` fires right after auto or manual compaction and is the one hook
 whose output reaches the model, so this hook reads both files back as
 `additionalContext`:
 
 - the newest checkpoint whose `session_id` matches this session (a
   checkpoint from another session is never restored);
-- `session_state.md` of the first active task in `.claude/tasks/readme.md`,
-  with its `updated:` time so the model can tell how fresh it is.
+- `session_state.md` of the active task (`lib/tasks.py`: the task named by
+  `CCMEMO_ACTIVE_TASK`, the one whose `Branch` matches, or the only active
+  one), with its `updated:` time so the model can tell how fresh it is.
 
 Read-only: checkpoints are still consumed (merged and deleted) by
 `/plan-task`. The payload stays under MAX_CHARS, well inside the harness's

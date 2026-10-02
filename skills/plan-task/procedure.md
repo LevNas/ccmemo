@@ -22,7 +22,7 @@ On new session start, after context compaction, or on session resume, perform th
    a. Read `<task-dir>/session_state.md` — contains current state, next action, and blockers in minimal form
    b. Read `<task-dir>/todo.md` — full task checklist
    c. Read active `context-*.md` files only if deeper context is needed (investigation details, error messages, etc.)
-   - **Git-tracked mode**: Find task dir from `.claude/tasks/readme.md`
+   - **Git-tracked mode**: Find task dir from `.claude/tasks/readme.md` — the row whose `Branch` matches the current branch, else ask which task when several are active
    - **Issue-centric mode**: Check assigned issues (e.g., `gh issue list --assignee=@me`) for open tasks
 4. On progress update, also update the issue tracker (comments, checklists) if applicable.
 
@@ -198,7 +198,7 @@ task_dir: <slug>-<account>-<date>
 7. **Register tasks with TaskCreate**: For each top-level task in `todo.md`, call `TaskCreate` with a description that includes the task directory path (e.g., `[plan-task-improve-i39] Implement TaskCreate/TaskUpdate sync`). This enables quick recovery after context compaction via `TaskList`
 8. Write `session_state.md` with initial state (see format above)
 9. Write `readme.md` with the plan's purpose and current state
-10. Add an entry to `.claude/tasks/readme.md`
+10. Add an entry to `.claude/tasks/readme.md`. Fill its `Branch` cell with the branch name or fnmatch pattern(s) the task is worked on (e.g. `` `feat/auth-*` ``), so the capture, checkpoint and restore hooks pick this task when the session is on that branch. Leave it `—` only when this is the sole active task. If the table has no `Branch` column yet, add one after `Issue`
 11. **Issue sync**: If linked to an issue, update the issue body with the plan summary (approach, phases, completion criteria)
 
 ## Working on Tasks

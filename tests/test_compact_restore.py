@@ -271,6 +271,65 @@ def test_decisions_survive_a_long_tail():
         check("long tail: 10-decision cap drops the oldest", "plan step 01" not in ctx, ctx[:300])
 
 
+def test_decisions_short_requests_and_answers():
+    """Short imperatives and AskUserQuestion answers are kept (#58)."""
+    with tempfile.TemporaryDirectory() as base:
+        project = make_project(base)
+        transcript = os.path.join(base, "transcript.jsonl")
+        long_prompt = ("最初の文はここで終わります。" * 10
+                       + "二つ目の段落は長く続きますが途中で切られるはずの文です" * 5)
+        question = "自動コミットの不具合がありました。どう進めますか？"
+        rows = [
+            {"type": "user", "message": {"role": "user", "content": long_prompt}},
+            {"type": "user", "message": {"role": "user", "content": "PR #29 をマージして"}},
+            {"type": "user", "message": {"role": "user", "content": "次に進めて"}},
+            {"type": "user", "message": {"role": "user",
+             "content": "[Request interrupted by user]"}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "text", "text": "<system-reminder>harness note</system-reminder>"},
+                {"type": "text", "text": "設定も入れて"}]}},
+            {"type": "user",
+             "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": "t9",
+                  "content": f'Your questions have been answered: "{question}"="x"'}]},
+             "toolUseResult": {
+                 "questions": [{"question": question, "header": "進め方"}],
+                 "answers": {question: "先に直してから有効化 (Recommended)"}}},
+        ]
+        with open(transcript, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        run(PRECOMPACT, project, {
+            "session_id": SESSION, "transcript_path": transcript,
+            "cwd": project, "trigger": "auto", "hook_event_name": "PreCompact"})
+        rc, out = restore(project)
+        ctx = context_of(out)
+        check("decision: short imperative", "PR #29 をマージして" in ctx, ctx)
+        check("decision: very short imperative", "- 次に進めて" in ctx, ctx)
+        check("decision: text beside a tagged block", "- 設定も入れて" in ctx, ctx)
+        check("not a decision: tagged block", "harness note" not in ctx, ctx)
+        check("not a decision: interruption marker", "Request interrupted" not in ctx, ctx)
+        check("decision: AskUserQuestion answer with its header",
+              "[進め方] 先に直してから有効化 (Recommended)" in ctx, ctx)
+        check("not a decision: answer's tool_result text", "Your questions" not in ctx, ctx)
+        check("long prompt cut at a sentence end, marked",
+              "ここで終わります。…" in ctx, ctx[:600])
+        order = [ctx.find(s) for s in ("最初の文", "PR #29", "次に進めて", "[進め方]")]
+        check("decisions oldest first", order == sorted(order) and -1 not in order, order)
+
+
+def test_shorten_boundaries():
+    sys.path.insert(0, HOOKS)
+    from precompact_checkpoint import shorten
+    check("short text untouched", shorten("短い文です。") == "短い文です。")
+    cut = shorten("a" * 150 + "、" + "b" * 100)
+    check("cut at a clause break", cut == "a" * 150 + "、…", cut)
+    cut = shorten("x" * 300)
+    check("no boundary: hard cut, marked", cut == "x" * 199 + "…" and len(cut) == 200, len(cut))
+    cut = shorten("y" * 20 + "。" + "z" * 300)
+    check("boundary too early: hard cut", cut.endswith("z…") and len(cut) == 200, cut[:30])
+
+
 def main():
     for t in sorted(k for k in globals() if k.startswith("test_")):
         globals()[t]()

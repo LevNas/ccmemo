@@ -19,8 +19,9 @@ choose to. Most updates need nothing from you.
 
 | You are updating from | What to read |
 |---|---|
-| 1.29.0 or later | Nothing to do. |
-| 1.28.x | Nothing to do. [1.29: working state comes back after compaction](#129-working-state-comes-back-after-compaction) describes one thing you may notice. |
+| 1.30.0 or later | Nothing to do. |
+| 1.29.x | Usually nothing. Read [1.30: the active task follows your branch](#130-the-active-task-follows-your-branch) if `.claude/tasks/readme.md` lists more than one active task. |
+| 1.28.x | The section above, plus [1.29: working state comes back after compaction](#129-working-state-comes-back-after-compaction) describes one thing you may notice. |
 | 1.27.x | Nothing to do. The section above, plus [1.28: the index can cover the whole repository](#128-the-index-can-cover-the-whole-repository), which describes an opt-in and two things you may notice. |
 | 1.26.x | The section above, plus [1.27: entry ids and verification](#127-entry-ids-and-verification). One command plus one line; nothing breaks if you skip it. |
 | 1.25.x or 1.24.x | The sections above, plus [1.26: descriptions and link labels](#126-descriptions-and-link-labels). Optional work; nothing breaks if you skip it. |
@@ -54,6 +55,56 @@ under a heading marked *advisory*, and the exit code stays 0. A pre-commit
 hook therefore keeps passing after an update. When you want to try the new
 rules before committing to them, run `kb_graph.py --schema 2 lint`.
 
+## 1.30: the active task follows your branch
+
+### Do I need to do anything?
+
+Only if `.claude/tasks/readme.md` lists more than one task under
+`## Active`. With one active task, or none, nothing changes.
+
+### What changed
+
+ccmemo uses the active task's directory in three places: it records each
+file change in `context-*.md`, writes `session_state.md` before compaction,
+and reads `session_state.md` back after compaction. Until 1.29 the active task
+was simply the first row of the `## Active` table, so with several active
+tasks a session working on the second one wrote into the first and, after
+compaction, was shown the first one's state.
+
+From 1.30 ccmemo picks a task only when it can tell which one you are on:
+
+1. The directory named by `CCMEMO_ACTIVE_TASK`.
+2. The first active row whose `Branch` column matches the branch checked out
+   where the session runs (a worktree has its own branch).
+3. The only active row, when exactly one task is active and it names no branch.
+
+Otherwise there is no active task: no capture, no `session_state.md`, and
+the restore after compaction shows the checkpoint only.
+
+The checkpoint also keeps your requests better: it now records your latest
+prompts as you typed them, including short ones such as "merge it", and the
+answers you chose in Claude's multiple-choice questions. Before, only
+prompts containing words from a fixed list were kept.
+
+### What to do with several active tasks
+
+Add a `Branch` column to the `## Active` table and list, for each task, the
+branch names or patterns it is worked on:
+
+```markdown
+| Directory | Issue | Branch | Status | Summary |
+|-----------|-------|--------|--------|---------|
+| `auth_refactor-i42-bob-20260304/` | #42 | `feat/auth-*` | in progress | … |
+| `docs_cleanup-carol-20260310/` | — | `docs/cleanup`, `docs/cleanup-*` | in progress | … |
+```
+
+A pattern is an fnmatch pattern (`*` matches anything, including `/`).
+Separate several with commas or spaces. `—` or an empty cell means no branch.
+
+For a one-off session on a branch no row lists, set `CCMEMO_ACTIVE_TASK` to
+the task directory. To keep the old behavior everywhere, set
+`CCMEMO_ACTIVE_TASK_FALLBACK=first`.
+
 ## 1.29: working state comes back after compaction
 
 ### Do I need to do anything?
@@ -64,8 +115,9 @@ No. There is nothing to migrate and no setting to add.
 
 Before compaction, ccmemo has always saved a checkpoint (the files you
 changed, decisions you stated, knowledge entries you read) and the active
-task's `session_state.md`. Until now nothing brought them back: the notice
-the save printed was shown to you, not to Claude. From 1.29 a new
+task's `session_state.md`. Until now nothing brought them back: Claude Code
+discards the notice the save printed, so neither you nor Claude saw it. From
+1.29 a new
 `SessionStart` hook, registered for compaction only, reads both files right
 after compaction and adds them to Claude's context.
 

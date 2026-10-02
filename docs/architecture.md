@@ -88,7 +88,9 @@ plus a fourth stage that brings the saved state back afterwards (since v1.29.0):
 **Stage 1 (PostToolUse hook):** Every time Write or Edit modifies a file, the change
 is automatically appended to the active task's `context-*.md` file. This provides
 incremental context capture that survives compaction. Only fires when an active task
-exists in `.claude/tasks/readme.md`.
+is found (`hooks/lib/tasks.py`: `CCMEMO_ACTIVE_TASK`, a `Branch` match in
+`.claude/tasks/readme.md`, or the only active row; otherwise none, so a capture
+never lands in an unrelated task).
 
 **Stage 2 (Stop hook):** When the transcript exceeds 300KB and no knowledge entry
 has been written recently, the stop is blocked once so the *model* self-assesses:
@@ -100,11 +102,11 @@ entry paths) used to suppress the nudge almost permanently, and where the
 canonical subagent recording flow leaves no Write call at all.
 
 **Stage 3 (PreCompact hook):** Before compaction, a checkpoint is automatically saved
-to `.claude/context-checkpoints/` with modified file paths and user decisions extracted
-from the transcript tail.
+to `.claude/context-checkpoints/` with modified file paths from the transcript tail,
+and the user's latest prompts and `AskUserQuestion` answers from the whole transcript.
 
 **Stage 4 (SessionStart hook, matcher `compact`):** PreCompact cannot add
-context, and its `systemMessage` reaches the user only, so stage 3 alone saves
+context, and the harness discards its `systemMessage`, so stage 3 alone saves
 state the model never sees. SessionStart with source `compact` fires right
 after auto or manual compaction and its `additionalContext` does reach the
 model. `sessionstart_compact_restore.py` reads back the newest checkpoint whose

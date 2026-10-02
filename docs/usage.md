@@ -129,6 +129,16 @@ entries before starting work. Patterns and examples:
   `SessionStart` hook (matcher `compact`) adds the session's latest
   checkpoint and the active task's `session_state.md` to Claude's context,
   under 8,000 characters. Set `CCMEMO_COMPACT_RESTORE=0` to turn it off.
+- **Which task is active** — the capture, checkpoint and restore hooks write
+  to and read from one task directory. They pick it in this order: the
+  directory named by `CCMEMO_ACTIVE_TASK`; the first `## Active` row of
+  `.claude/tasks/readme.md` whose optional `Branch` column (fnmatch patterns,
+  e.g. `` `feat/auth-*` ``) matches the branch checked out in the session's
+  directory, which follows a worktree; the only active row when exactly one
+  is active and it names no branch. Otherwise no task: the hooks write no
+  task file rather than one in an unrelated task.
+  `CCMEMO_ACTIVE_TASK_FALLBACK=first` brings back the pre-1.30 choice (the
+  first active row).
 - **Redact hook `op://` handling** — the entry redact hook masks every
   `op://` reference (1Password secret-reference URIs; inert for knowledge
   bases that do not use 1Password) by default. Set `CCMEMO_REDACT_OP_REF=keep-names` to keep

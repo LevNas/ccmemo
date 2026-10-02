@@ -47,8 +47,71 @@ def extract_referenced_knowledge(lines: list[str]) -> list[str]:
     return sorted(entries)
 
 
+MAX_DECISIONS = 10
+DECISION_CHARS = 200
+# Where a cut decision may end: sentence ends first, then clause breaks.
+_BOUNDARIES = ("。", "！", "？", ". ", "! ", "? ", "\n", "、", ", ", "，")
+
+
+def shorten(text: str, limit: int = DECISION_CHARS) -> str:
+    """Cut text to limit characters at a sentence or clause boundary, marked with "…"."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text.replace("\n", " ")
+    head = text[: limit - 1]
+    floor = limit * 3 // 5  # never give up more than 40% for a cleaner cut
+    cut = max((head.rfind(b) + len(b.rstrip()) for b in _BOUNDARIES), default=-1)
+    if cut < floor:
+        cut = len(head)
+    return head[:cut].replace("\n", " ").rstrip() + "…"
+
+
+def _turn_text(entry: dict) -> str:
+    """The user's own text in a transcript turn ("" for tool results)."""
+    # Claude Code transcripts nest the turn under "message"; older and
+    # synthetic shapes put "content" at the top level.
+    message = entry.get("message")
+    if isinstance(message, dict) and "content" in message:
+        content = message["content"]
+    else:
+        content = entry.get("content", "")
+    if isinstance(content, list):
+        # Text blocks only: tool_result blocks share the "user" type but
+        # carry tool output. A tagged block (<system-reminder>, …) riding
+        # along with the prompt is the harness's, not the user's.
+        content = " ".join(
+            block.get("text", "").strip() for block in content
+            if isinstance(block, dict) and block.get("type", "text") == "text"
+            and not block.get("text", "").lstrip().startswith("<")
+        )
+    return content.strip() if isinstance(content, str) else ""
+
+
+def _question_answers(entry: dict) -> list[str]:
+    """`[header] answer` for each AskUserQuestion answer carried by this turn."""
+    result = entry.get("toolUseResult")
+    if not isinstance(result, dict) or not isinstance(result.get("answers"), dict):
+        return []
+    headers = {
+        q.get("question"): q.get("header")
+        for q in result.get("questions") or [] if isinstance(q, dict)
+    }
+    found = []
+    for question, answer in result["answers"].items():
+        if not isinstance(answer, str) or not answer.strip():
+            continue
+        label = headers.get(question) or question
+        found.append(f"[{label}] {answer.strip()}")
+    return found
+
+
 def extract_user_decisions(lines: list[str]) -> list[str]:
-    """Extract user messages that look like decisions or plans."""
+    """The user's latest requests and AskUserQuestion answers, oldest first.
+
+    Every prompt the user typed counts: requests in Japanese are mostly short
+    imperatives (〜して, 進めて) that no keyword list catches, and the newest
+    ones are what the session must not forget. Harness traffic is left out.
+    """
     decisions = []
     for line in lines:
         try:
@@ -65,59 +128,33 @@ def extract_user_decisions(lines: list[str]) -> list[str]:
         if role not in ("user", "human") and msg_type not in ("user", "human"):
             continue
 
-        # Hook feedback (isMeta) and the compaction summary are not the
-        # user's words.
+        # Hook feedback, skill bodies (isMeta) and the compaction summary are
+        # not the user's words.
         if entry.get("isMeta") or entry.get("isCompactSummary"):
             continue
 
-        # Claude Code transcripts nest the turn under "message"; older and
-        # synthetic shapes put "content" at the top level.
-        message = entry.get("message")
-        if isinstance(message, dict) and "content" in message:
-            content = message["content"]
-        else:
-            content = entry.get("content", "")
-        if isinstance(content, list):
-            # Text blocks only: tool_result blocks share the "user" type but
-            # carry tool output, never the user's decisions.
-            texts = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type", "text") == "text":
-                    text = block.get("text", "")
-                    if text:
-                        texts.append(text)
-            content = " ".join(texts)
+        # The clearest decisions: answers picked in an AskUserQuestion dialog.
+        # They arrive as a tool_result turn with the structured answers in
+        # toolUseResult.
+        answers = _question_answers(entry)
+        if answers:
+            decisions.extend(shorten(a) for a in answers)
+            continue
 
-        if not isinstance(content, str) or len(content) < 10:
+        content = _turn_text(entry)
+        if len(content) < 2:
             continue
 
         # Harness notices (<task-notification>, <command-name>, …) arrive as
-        # user turns that start with a tag.
-        if content.lstrip().startswith("<"):
+        # user turns that start with a tag; interruptions as "[Request …]".
+        if content.startswith("<") or content.startswith("[Request interrupted"):
             continue
 
-        # Heuristic: lines with decision-like keywords
-        lower = content.lower()
-        decision_keywords = [
-            "にする", "にした", "方針", "計画", "プラン", "決定",
-            "採用", "変更", "修正", "追加", "削除", "移行",
-            "decide", "plan", "approach", "strategy", "change",
-            "let's", "we should", "i want", "please",
-        ]
-        if any(kw in lower for kw in decision_keywords):
-            # Truncate long messages
-            snippet = content[:200].replace("\n", " ").strip()
-            if snippet:
-                decisions.append(snippet)
+        decisions.append(shorten(content))
 
-    # Deduplicate and keep the most recent ten, oldest first
-    seen = set()
-    unique = []
-    for d in decisions:
-        if d not in seen:
-            seen.add(d)
-            unique.append(d)
-    return unique[-10:]
+    # Keep the newest occurrence of each, then the newest MAX_DECISIONS.
+    latest = list(dict.fromkeys(reversed(decisions)))
+    return list(reversed(latest[:MAX_DECISIONS]))
 
 
 
@@ -295,8 +332,9 @@ def main() -> None:
     if task_dir:
         update_session_state(task_dir, user_decisions, modified_files)
 
-    # systemMessage is shown to the user only; the model never sees it, and
-    # PreCompact cannot add context. The checkpoint and session_state.md
+    # The harness discards a PreCompact hook's systemMessage (the user does
+    # not see it either; it stays for direct runs and tests), and PreCompact
+    # cannot add context. The checkpoint and session_state.md
     # reach the model through sessionstart_compact_restore.py (SessionStart,
     # matcher "compact"), which reads them back right after compaction.
     state_note = ""
