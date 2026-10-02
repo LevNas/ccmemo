@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.30.0] - 2026-10-02
+
+The checkpoint keeps what you asked for, and the active task follows your
+branch (#58, #59). Repositories listing more than one active task should add
+a `Branch` column to `.claude/tasks/readme.md` (`docs/upgrading.md`, 1.30);
+otherwise nothing to do.
+
+### Changed
+- Active task lookup (`hooks/lib/tasks.py`, shared by the capture,
+  PreCompact and SessionStart(compact) hooks) no longer takes the first
+  `## Active` row. In order: the directory named by `CCMEMO_ACTIVE_TASK`;
+  the first active row whose optional `Branch` column (fnmatch patterns)
+  matches the branch checked out in the hook's `cwd`, which follows a
+  worktree; the only active row when exactly one is active and names no
+  branch. Otherwise none, so nothing is written into an unrelated task:
+  before, a session on another branch appended its captures and its
+  `session_state.md` to the first row's task, and the restore showed that
+  task. `CCMEMO_ACTIVE_TASK_FALLBACK=first` restores the old choice. Any
+  `## ` heading now ends the `## Active` section, not only `## Completed`.
+- PreCompact decisions: every prompt the user typed counts, not only those
+  containing a word from a fixed keyword list. Short Japanese imperatives
+  (〜して, 進めて) never matched, so a long session restored one stale
+  consultation and none of the recent requests. The newest ten are kept,
+  oldest first, each cut at a sentence or clause boundary and marked `…`.
+- `/plan-task` template and procedure: the task index has a `Branch` column,
+  filled when a plan is created.
+
+### Added
+- PreCompact records `AskUserQuestion` answers as decisions
+  (`[header] chosen option`), read from the turn's structured
+  `toolUseResult.answers`.
+- `tests/test_active_task.py`; decision tests in `tests/test_compact_restore.py`.
+
+### Fixed
+- Docs and comments said a PreCompact hook's `systemMessage` is shown to the
+  user. The harness discards it; the user does not see it either.
+
 ## [1.29.1] - 2026-10-01
 
 Opt-in auto-commit (`CCMEMO_AUTOCOMMIT=1`) fixes. Nothing to do; only users
@@ -24,8 +61,8 @@ who enabled auto-commit are affected.
 
 Working state comes back after compaction (#54). The PreCompact hook has
 always saved a checkpoint and the active task's `session_state.md`, but
-nothing read them back: PreCompact cannot add context and its
-`systemMessage` is shown to the user only. No action needed
+nothing read them back: PreCompact cannot add context and the harness
+discards its `systemMessage` (corrected in 1.30.0). No action needed
 (`docs/upgrading.md`, 1.29).
 
 ### Added
