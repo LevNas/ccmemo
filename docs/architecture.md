@@ -209,8 +209,13 @@ export CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN=45   # default: 45
   comfortably before auto-compaction typically raise it (800–1200KB observed
   to work well — transcript bytes run at roughly 10KB per 1k context tokens,
   tool-output-heavy sessions higher).
-- `…_RECENT_WRITE_MIN` — how long one entry write keeps the nudge quiet, so a
-  session that just recorded is not immediately re-nudged.
+- `…_RECENT_WRITE_MIN` — how long one entry write, or one nudge, keeps the
+  nudge quiet, so a session that just recorded is not immediately re-nudged,
+  and a long session whose transcript stays above the threshold is nudged at
+  most once per window instead of at every turn. Each nudge leaves an empty
+  per-session marker in `${XDG_CACHE_HOME:-~/.cache}/ccmemo/context-guard/`
+  (outside the repository), named by a hash of the session id; its mtime is
+  the nudge time. Markers older than seven days are pruned.
 
 ### Disabling
 

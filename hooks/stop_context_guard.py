@@ -3,8 +3,20 @@
 
 First line of defense against context loss during compaction. When the
 transcript exceeds a size threshold and no knowledge entry has been
-recorded recently, blocks ONCE so the model can decide whether the session
-produced knowledge worth recording (design decisions, pitfalls, fixes).
+recorded recently, blocks one Stop so the model can decide whether the
+session produced knowledge worth recording (design decisions, pitfalls,
+fixes).
+
+The condition is checked again at every turn. In a long session the
+transcript stays above the threshold for good, so without a memory of the
+last nudge the model was asked again at every turn once the last entry
+write was older than the window. Each nudge is therefore recorded per
+session (outside the repository, under the user cache directory) and keeps
+the guard quiet for the same window: at most one nudge per window. The
+record is an empty marker file whose mtime is the nudge time, named by a
+hash of the session id; its content is never read, so a torn or corrupt
+write cannot silence the guard. A record that cannot be written leaves the
+old behavior.
 
 Design (SPEC: 判断=LLM / 決定論=hook): the hook only detects the *moment*
 (big context + nothing recorded). The reason returns to the MODEL — it is
@@ -18,15 +30,17 @@ turn with no loop, and recording still goes through the explicit skills
 Environment:
     CCMEMO_CONTEXT_GUARD_THRESHOLD_KB: Size threshold in KB (default: 300)
     CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN: How many minutes a knowledge-entry
-        write suppresses the nudge (default: 45)
+        write, or a nudge, suppresses the next nudge (default: 45)
 """
 
+import hashlib
 import json
 import os
 import sys
 import time
 
 ENTRIES_DIR = os.path.join(".claude", "knowledge", "entries")
+STATE_KEEP_S = 7 * 24 * 3600  # nudge records older than this are pruned
 
 
 def get_threshold_bytes() -> int:
@@ -67,6 +81,73 @@ def has_recent_knowledge_write() -> bool:
     return (time.time() - latest) < get_recent_write_window_s()
 
 
+def state_dir() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "ccmemo", "context-guard")
+
+
+def state_path(session_key: str) -> str | None:
+    """Per-session nudge marker, or None without a session key.
+
+    The key is hashed, so any id (or transcript path) maps to a safe file
+    name inside state_dir().
+    """
+    if not session_key:
+        return None
+    digest = hashlib.sha256(session_key.encode("utf-8", "surrogatepass")).hexdigest()
+    return os.path.join(state_dir(), f"{digest[:32]}.nudge")
+
+
+def nudged_recently(session_key: str) -> bool:
+    """Whether this session was nudged within the window (marker mtime).
+
+    A marker dated in the future (clock stepped back, file copied from
+    another machine) counts as not recent, so it is rewritten rather than
+    silencing the guard until the clock catches up.
+    """
+    path = state_path(session_key)
+    if not path:
+        return False
+    try:
+        age = time.time() - os.stat(path).st_mtime
+    except OSError:
+        return False
+    return 0 <= age < get_recent_write_window_s()
+
+
+def record_nudge(session_key: str) -> None:
+    """Remember this nudge. Failures are ignored."""
+    path = state_path(session_key)
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8"):
+            pass
+        os.utime(path, None)
+    except OSError:
+        pass
+
+
+def prune_records() -> None:
+    """Remove markers older than STATE_KEEP_S, one file at a time."""
+    directory = state_dir()
+    cutoff = time.time() - STATE_KEEP_S
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith((".nudge", ".json")):
+            continue
+        old = os.path.join(directory, name)
+        try:
+            if os.path.isfile(old) and os.path.getmtime(old) < cutoff:
+                os.remove(old)
+        except OSError:
+            continue
+
+
 def main() -> None:
     try:
         input_data = json.load(sys.stdin)
@@ -102,6 +183,12 @@ def main() -> None:
         print("{}")
         return
 
+    # Asked within the window already: the model has answered once.
+    session_key = str(input_data.get("session_id") or "") or transcript_path
+    if nudged_recently(session_key):
+        print("{}")
+        return
+
     # Block once so the MODEL self-assesses. The reason returns to the model
     # (not a question to the user); stop_hook_active allows the 2nd stop.
     size_kb = size // 1024
@@ -126,6 +213,11 @@ def main() -> None:
         },
     }
     print(json.dumps(result, ensure_ascii=False))
+    sys.stdout.flush()
+    # Recorded only after the nudge is out: a hook killed before printing
+    # must not use up the window without the model ever seeing the nudge.
+    record_nudge(session_key)
+    prune_records()
 
 
 if __name__ == "__main__":
