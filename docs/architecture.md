@@ -212,9 +212,10 @@ export CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN=45   # default: 45
 - `…_RECENT_WRITE_MIN` — how long one entry write, or one nudge, keeps the
   nudge quiet, so a session that just recorded is not immediately re-nudged,
   and a long session whose transcript stays above the threshold is nudged at
-  most once per window instead of at every turn. The time of each nudge is
-  kept per session in `${XDG_CACHE_HOME:-~/.cache}/ccmemo/context-guard/`
-  (outside the repository; records older than seven days are pruned).
+  most once per window instead of at every turn. Each nudge leaves an empty
+  per-session marker in `${XDG_CACHE_HOME:-~/.cache}/ccmemo/context-guard/`
+  (outside the repository), named by a hash of the session id; its mtime is
+  the nudge time. Markers older than seven days are pruned.
 
 ### Disabling
 

@@ -10,11 +10,13 @@ fixes).
 The condition is checked again at every turn. In a long session the
 transcript stays above the threshold for good, so without a memory of the
 last nudge the model was asked again at every turn once the last entry
-write was older than the window. The time of each nudge is therefore kept
-per session (outside the repository, under the user cache directory), and
-a nudge also keeps the guard quiet for the same window: at most one nudge
-per window. A state file that cannot be read keeps the guard quiet; one
-that cannot be written leaves the old behavior.
+write was older than the window. Each nudge is therefore recorded per
+session (outside the repository, under the user cache directory) and keeps
+the guard quiet for the same window: at most one nudge per window. The
+record is an empty marker file whose mtime is the nudge time, named by a
+hash of the session id; its content is never read, so a torn or corrupt
+write cannot silence the guard. A record that cannot be written leaves the
+old behavior.
 
 Design (SPEC: 判断=LLM / 決定論=hook): the hook only detects the *moment*
 (big context + nothing recorded). The reason returns to the MODEL — it is
@@ -31,9 +33,9 @@ Environment:
         write, or a nudge, suppresses the next nudge (default: 45)
 """
 
+import hashlib
 import json
 import os
-import re
 import sys
 import time
 
@@ -84,47 +86,66 @@ def state_dir() -> str:
     return os.path.join(base, "ccmemo", "context-guard")
 
 
-def state_path(session_id: str) -> str | None:
-    """Per-session nudge record, or None when the session id is unusable."""
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id or ""):
-        return None
-    return os.path.join(state_dir(), f"{session_id}.json")
+def state_path(session_key: str) -> str | None:
+    """Per-session nudge marker, or None without a session key.
 
-
-def nudged_recently(session_id: str) -> bool:
-    """Whether this session was nudged within the window.
-
-    No record means no earlier nudge. A record that exists but cannot be read
-    counts as recent, so a broken state file silences the guard rather than
-    bringing back the nudge at every turn.
+    The key is hashed, so any id (or transcript path) maps to a safe file
+    name inside state_dir().
     """
-    path = state_path(session_id)
-    if not path or not os.path.exists(path):
+    if not session_key:
+        return None
+    digest = hashlib.sha256(session_key.encode("utf-8", "surrogatepass")).hexdigest()
+    return os.path.join(state_dir(), f"{digest[:32]}.nudge")
+
+
+def nudged_recently(session_key: str) -> bool:
+    """Whether this session was nudged within the window (marker mtime).
+
+    A marker dated in the future (clock stepped back, file copied from
+    another machine) counts as not recent, so it is rewritten rather than
+    silencing the guard until the clock catches up.
+    """
+    path = state_path(session_key)
+    if not path:
         return False
     try:
-        with open(path, encoding="utf-8") as f:
-            last = float(json.load(f)["nudged_at"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return True
-    return (time.time() - last) < get_recent_write_window_s()
+        age = time.time() - os.stat(path).st_mtime
+    except OSError:
+        return False
+    return 0 <= age < get_recent_write_window_s()
 
 
-def record_nudge(session_id: str) -> None:
-    """Remember this nudge and prune old records. Failures are ignored."""
-    path = state_path(session_id)
+def record_nudge(session_key: str) -> None:
+    """Remember this nudge. Failures are ignored."""
+    path = state_path(session_key)
     if not path:
         return
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"nudged_at": time.time()}, f)
-        cutoff = time.time() - STATE_KEEP_S
-        for name in os.listdir(os.path.dirname(path)):
-            old = os.path.join(os.path.dirname(path), name)
-            if name.endswith(".json") and os.path.getmtime(old) < cutoff:
-                os.remove(old)
+        with open(path, "a", encoding="utf-8"):
+            pass
+        os.utime(path, None)
     except OSError:
         pass
+
+
+def prune_records() -> None:
+    """Remove markers older than STATE_KEEP_S, one file at a time."""
+    directory = state_dir()
+    cutoff = time.time() - STATE_KEEP_S
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith((".nudge", ".json")):
+            continue
+        old = os.path.join(directory, name)
+        try:
+            if os.path.isfile(old) and os.path.getmtime(old) < cutoff:
+                os.remove(old)
+        except OSError:
+            continue
 
 
 def main() -> None:
@@ -163,14 +184,13 @@ def main() -> None:
         return
 
     # Asked within the window already: the model has answered once.
-    session_id = str(input_data.get("session_id") or "")
-    if nudged_recently(session_id):
+    session_key = str(input_data.get("session_id") or "") or transcript_path
+    if nudged_recently(session_key):
         print("{}")
         return
 
     # Block once so the MODEL self-assesses. The reason returns to the model
     # (not a question to the user); stop_hook_active allows the 2nd stop.
-    record_nudge(session_id)
     size_kb = size // 1024
     result = {
         "decision": "block",
@@ -193,6 +213,11 @@ def main() -> None:
         },
     }
     print(json.dumps(result, ensure_ascii=False))
+    sys.stdout.flush()
+    # Recorded only after the nudge is out: a hook killed before printing
+    # must not use up the window without the model ever seeing the nudge.
+    record_nudge(session_key)
+    prune_records()
 
 
 if __name__ == "__main__":
