@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.30.1] - 2026-10-02
+
+The context-guard nudge no longer repeats at every turn of a long session.
+Nothing to do.
+
+### Fixed
+- `hooks/stop_context_guard.py` checks its condition at every turn. A long
+  session's transcript stays above the threshold for good, so once the last
+  knowledge-entry write was older than `CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN`
+  the model was asked to record at every turn, each costing a turn of its
+  own. A nudge now keeps the guard quiet for the same window as an entry
+  write: at most one nudge per window. The time of each nudge is kept per
+  session in `${XDG_CACHE_HOME:-~/.cache}/ccmemo/context-guard/`, outside
+  the repository; records older than seven days are pruned. A record that
+  cannot be read keeps the guard quiet; a cache that cannot be written
+  leaves the old behavior. An input without a usable `session_id` behaves
+  as before.
+- `tests/test_context_guard.py`: one nudge per window across turns, a
+  separate window per session, window expiry, unreadable state, unwritable
+  cache, and a session id that is not a safe file name.
+
 ## [1.30.0] - 2026-10-02
 
 The checkpoint keeps what you asked for, and the active task follows your

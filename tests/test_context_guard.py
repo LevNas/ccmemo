@@ -41,13 +41,16 @@ def make_project(base, transcript_kb, entry_age_s=None, transcript_text=None):
     return project, transcript
 
 
-def run_hook(project, transcript, stop_hook_active=False, env_extra=None):
+def run_hook(project, transcript, stop_hook_active=False, env_extra=None,
+             session_id=None):
     env = dict(os.environ)
     env.pop("CCMEMO_CONTEXT_GUARD_THRESHOLD_KB", None)
     env.pop("CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN", None)
     if env_extra:
         env.update(env_extra)
     payload = {"transcript_path": transcript, "stop_hook_active": stop_hook_active}
+    if session_id is not None:
+        payload["session_id"] = session_id
     proc = subprocess.run(
         [sys.executable, HOOK], input=json.dumps(payload),
         capture_output=True, text=True, cwd=project, env=env, timeout=30,
@@ -131,6 +134,84 @@ def test_env_overrides():
                         env_extra={"CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN": "5"})
         check("shortened write window: block",
               out2.get("decision") == "block", out2)
+
+
+SESSION = "11111111-2222-3333-4444-555555555555"
+
+
+def state_file(cache):
+    return os.path.join(cache, "ccmemo", "context-guard", f"{SESSION}.json")
+
+
+def test_one_nudge_per_window_across_turns():
+    """A long session is nudged once per window, not at every turn."""
+    with tempfile.TemporaryDirectory() as base:
+        cache = os.path.join(base, "cache")
+        project, transcript = make_project(base, transcript_kb=400,
+                                           entry_age_s=6 * 3600)
+        env = {"XDG_CACHE_HOME": cache}
+        first = run_hook(project, transcript, env_extra=env, session_id=SESSION)
+        check("turn 1: block", first.get("decision") == "block", first)
+        check("turn 1: nudge recorded", os.path.isfile(state_file(cache)))
+        second = run_hook(project, transcript, env_extra=env, session_id=SESSION)
+        check("turn 2 within window: allow", second == {}, second)
+        other = run_hook(project, transcript, env_extra=env,
+                         session_id="99999999-8888-7777-6666-555555555555")
+        check("another session: own window, block",
+              other.get("decision") == "block", other)
+
+
+def test_nudge_window_expires():
+    with tempfile.TemporaryDirectory() as base:
+        cache = os.path.join(base, "cache")
+        project, transcript = make_project(base, transcript_kb=400,
+                                           entry_age_s=6 * 3600)
+        os.makedirs(os.path.dirname(state_file(cache)))
+        with open(state_file(cache), "w", encoding="utf-8") as f:
+            json.dump({"nudged_at": time.time() - 3600}, f)
+        out = run_hook(project, transcript, env_extra={"XDG_CACHE_HOME": cache},
+                       session_id=SESSION)
+        check("nudge older than the window: block", out.get("decision") == "block", out)
+
+
+def test_broken_state_keeps_quiet():
+    with tempfile.TemporaryDirectory() as base:
+        cache = os.path.join(base, "cache")
+        project, transcript = make_project(base, transcript_kb=400,
+                                           entry_age_s=6 * 3600)
+        os.makedirs(os.path.dirname(state_file(cache)))
+        with open(state_file(cache), "w", encoding="utf-8") as f:
+            f.write("not json")
+        out = run_hook(project, transcript, env_extra={"XDG_CACHE_HOME": cache},
+                       session_id=SESSION)
+        check("unreadable state: allow", out == {}, out)
+
+
+def test_unwritable_cache_keeps_old_behavior():
+    with tempfile.TemporaryDirectory() as base:
+        blocker = os.path.join(base, "cache")
+        with open(blocker, "w") as f:  # a file where the cache dir should be
+            f.write("x")
+        project, transcript = make_project(base, transcript_kb=400,
+                                           entry_age_s=6 * 3600)
+        env = {"XDG_CACHE_HOME": blocker}
+        first = run_hook(project, transcript, env_extra=env, session_id=SESSION)
+        second = run_hook(project, transcript, env_extra=env, session_id=SESSION)
+        check("unwritable cache: still blocks",
+              first.get("decision") == "block" and second.get("decision") == "block",
+              (first, second))
+
+
+def test_unsafe_session_id_not_used_as_path():
+    with tempfile.TemporaryDirectory() as base:
+        cache = os.path.join(base, "cache")
+        project, transcript = make_project(base, transcript_kb=400,
+                                           entry_age_s=6 * 3600)
+        out = run_hook(project, transcript, env_extra={"XDG_CACHE_HOME": cache},
+                       session_id="../../escape")
+        check("unsafe session id: block without state",
+              out.get("decision") == "block" and not os.path.exists(base + "/escape.json"),
+              out)
 
 
 def main():

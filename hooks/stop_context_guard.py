@@ -3,8 +3,18 @@
 
 First line of defense against context loss during compaction. When the
 transcript exceeds a size threshold and no knowledge entry has been
-recorded recently, blocks ONCE so the model can decide whether the session
-produced knowledge worth recording (design decisions, pitfalls, fixes).
+recorded recently, blocks one Stop so the model can decide whether the
+session produced knowledge worth recording (design decisions, pitfalls,
+fixes).
+
+The condition is checked again at every turn. In a long session the
+transcript stays above the threshold for good, so without a memory of the
+last nudge the model was asked again at every turn once the last entry
+write was older than the window. The time of each nudge is therefore kept
+per session (outside the repository, under the user cache directory), and
+a nudge also keeps the guard quiet for the same window: at most one nudge
+per window. A state file that cannot be read keeps the guard quiet; one
+that cannot be written leaves the old behavior.
 
 Design (SPEC: 判断=LLM / 決定論=hook): the hook only detects the *moment*
 (big context + nothing recorded). The reason returns to the MODEL — it is
@@ -18,15 +28,17 @@ turn with no loop, and recording still goes through the explicit skills
 Environment:
     CCMEMO_CONTEXT_GUARD_THRESHOLD_KB: Size threshold in KB (default: 300)
     CCMEMO_CONTEXT_GUARD_RECENT_WRITE_MIN: How many minutes a knowledge-entry
-        write suppresses the nudge (default: 45)
+        write, or a nudge, suppresses the next nudge (default: 45)
 """
 
 import json
 import os
+import re
 import sys
 import time
 
 ENTRIES_DIR = os.path.join(".claude", "knowledge", "entries")
+STATE_KEEP_S = 7 * 24 * 3600  # nudge records older than this are pruned
 
 
 def get_threshold_bytes() -> int:
@@ -67,6 +79,54 @@ def has_recent_knowledge_write() -> bool:
     return (time.time() - latest) < get_recent_write_window_s()
 
 
+def state_dir() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "ccmemo", "context-guard")
+
+
+def state_path(session_id: str) -> str | None:
+    """Per-session nudge record, or None when the session id is unusable."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id or ""):
+        return None
+    return os.path.join(state_dir(), f"{session_id}.json")
+
+
+def nudged_recently(session_id: str) -> bool:
+    """Whether this session was nudged within the window.
+
+    No record means no earlier nudge. A record that exists but cannot be read
+    counts as recent, so a broken state file silences the guard rather than
+    bringing back the nudge at every turn.
+    """
+    path = state_path(session_id)
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            last = float(json.load(f)["nudged_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+    return (time.time() - last) < get_recent_write_window_s()
+
+
+def record_nudge(session_id: str) -> None:
+    """Remember this nudge and prune old records. Failures are ignored."""
+    path = state_path(session_id)
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"nudged_at": time.time()}, f)
+        cutoff = time.time() - STATE_KEEP_S
+        for name in os.listdir(os.path.dirname(path)):
+            old = os.path.join(os.path.dirname(path), name)
+            if name.endswith(".json") and os.path.getmtime(old) < cutoff:
+                os.remove(old)
+    except OSError:
+        pass
+
+
 def main() -> None:
     try:
         input_data = json.load(sys.stdin)
@@ -102,8 +162,15 @@ def main() -> None:
         print("{}")
         return
 
+    # Asked within the window already: the model has answered once.
+    session_id = str(input_data.get("session_id") or "")
+    if nudged_recently(session_id):
+        print("{}")
+        return
+
     # Block once so the MODEL self-assesses. The reason returns to the model
     # (not a question to the user); stop_hook_active allows the 2nd stop.
+    record_nudge(session_id)
     size_kb = size // 1024
     result = {
         "decision": "block",
