@@ -32,6 +32,13 @@ def test_span_does_not_cross_blank_line():
     assert targets("a stray ` here\n\n[a](a.md) and ` there\n") == [(3, "a.md")]
 
 
+def test_stray_backtick_in_tight_list_hides_nothing():
+    # a span continues onto one more line at most, so the stray backtick on
+    # line 1 cannot pair with the one on line 3 and hide the link on line 2
+    text = "- a ` stray\n- [b](b.md)\n- `code` and [c](c.md)\n"
+    assert targets(text) == [(2, "b.md"), (3, "c.md")]
+
+
 def test_fenced_blocks_ignored_and_line_numbers_kept():
     text = "```bash\n[a](a.md)\n\n`x\n```\n~~~\n[b](b.md)\n~~~\n[c](c.md)\n"
     assert targets(text) == [(9, "c.md")]

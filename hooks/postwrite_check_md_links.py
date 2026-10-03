@@ -19,9 +19,12 @@ from lib.hook_output import post_tool_use_context  # noqa: E402
 
 PENDING_ANNOTATION = re.compile(r"<!--\s*pending:\s*#(\d+)\s*-->")
 
-# A run of backticks closed by a run of the same length, not crossing a blank
-# line (CommonMark code spans may continue onto the next line of a paragraph).
-CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)(?:(?!\n[ \t]*\n).)+?(?<!`)\1(?!`)", re.S)
+# A run of backticks closed by a run of the same length. CommonMark lets a
+# span run on through its paragraph; here it may continue onto the next line
+# only, so one stray backtick in a tight list cannot pair with backticks
+# further down and hide the real links between them.
+CODE_SPAN = re.compile(
+    r"(?<!`)(`+)(?!`)[^\n]*?(?:\n(?![ \t]*\n)[^\n]*?)?(?<!`)\1(?!`)")
 
 
 def prose_lines(content: str) -> list[str]:
