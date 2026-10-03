@@ -1,7 +1,7 @@
 {
   "name": "ccmemo",
   "description": "Persist knowledge and plans across Claude Code sessions. Provides /record-knowledge, /plan-task, /review-knowledge, and /recall-knowledge skills.",
-  "version": "1.30.3",
+  "version": "1.30.4",
   "author": {
     "name": "LevNas"
   },
