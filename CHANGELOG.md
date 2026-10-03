@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.30.2] - 2026-10-03
+
+Warnings from the PostToolUse hooks now reach Claude. Nothing to do.
+
+### Fixed
+- `hooks/postwrite_check_md_links.py`, `hooks/postwrite_kb_lint.py` and
+  `hooks/postwrite_redact_entries.py` reported their findings as
+  `{"decision": "warn", "reason": ...}`. PostToolUse accepts only `"block"`
+  as a decision and drops the reason of any other value, so broken links,
+  lint findings, redaction notices and leak-scan warnings never reached the
+  model; a live session with 1.30.1 received nothing after writing a broken
+  link. They now go out as `hookSpecificOutput.additionalContext`, which
+  reaches Claude next to the tool result (`hooks/lib/hook_output.py`).
+  Redaction itself was not affected: the file was always rewritten.
+
+### Changed
+- The redact hook's leak-scan warnings stay out of Claude's context unless
+  `CCMEMO_LEAK_SCAN_WARN=1`, as they in effect were before this release. On
+  ordinary entries the scan flags the frontmatter `id`, the repository's own
+  name and links between entries, so delivering them would add a list of
+  false positives to every entry write (#63). The redaction notice is always
+  delivered.
+
+### Added
+- `tests/test_posttooluse_output.py`: the output shape of the link and
+  redaction hooks, leak-scan warnings only with `CCMEMO_LEAK_SCAN_WARN=1`,
+  and a check that no hook emits a decision other than `"block"`.
+
 ## [1.30.1] - 2026-10-02
 
 The context-guard nudge no longer repeats at every turn of a long session.

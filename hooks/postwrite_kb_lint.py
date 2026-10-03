@@ -20,6 +20,9 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.hook_output import post_tool_use_context  # noqa: E402
+
 ENTRIES_MARKER = os.sep + ".claude" + os.sep + "knowledge" + os.sep + "entries" + os.sep
 KB_GRAPH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "kb_graph.py")
 MAX_FINDINGS_SHOWN = 12
@@ -85,7 +88,7 @@ def main() -> None:
             "(raise `schema_version:` in .claude/knowledge/CLAUDE.md once migrated; "
             "see docs/upgrading.md)."
         )
-        json.dump({"decision": "warn", "reason": reason}, sys.stdout, ensure_ascii=False)
+        post_tool_use_context(reason)
         return
 
     lines = [f"  - {f['check']}: {f['detail']}" for f in enforced[:MAX_FINDINGS_SHOWN]]
@@ -99,7 +102,7 @@ def main() -> None:
         + "\n今のうちに修正してください（description はトリガー条件、リンクには「— なぜ辿るか」のラベル、"
         "amends/extends は相手側からの逆リンク）。検査の一覧: docs/link-graph.md の lint 節。"
     )
-    json.dump({"decision": "warn", "reason": reason}, sys.stdout, ensure_ascii=False)
+    post_tool_use_context(reason)
 
 
 if __name__ == "__main__":

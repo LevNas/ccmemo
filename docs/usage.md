@@ -144,6 +144,11 @@ entries before starting work. Patterns and examples:
   bases that do not use 1Password) by default. Set `CCMEMO_REDACT_OP_REF=keep-names` to keep
   item-name references (`op://vault/item-name/field` — no secret value) and
   mask only references containing a raw 26-character item/vault ID segment.
+- **Leak-scan warnings on entry writes (off by default)** — the redact hook
+  always tells Claude when it masked a value. Its leak-scan warnings
+  (UUIDs, home paths, `${…}`, base64-ish strings, private repo names) reach
+  Claude only with `CCMEMO_LEAK_SCAN_WARN=1`, because the scan still flags
+  ordinary entries ([#63](https://github.com/LevNas/ccmemo/issues/63)).
 - **Auto-search status filter** — the per-prompt `UserPromptSubmit` hook only
   injects entries whose frontmatter `status` is `active` (entries without a
   `status:` line count as active). Set `CCMEMO_SEARCH_STATUS` to a

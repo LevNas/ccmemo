@@ -235,7 +235,10 @@ sanitize. Hybrid behaviour (chosen 2026-06-21):
 - **Leak-prone shapes** — UUIDs, home paths, `${…}`, base64-ish strings,
   private repo names (`CCMEMO_PRIVATE_REPO_NAMES`) — are reported as warnings
   only; masking them correctly needs human context (placeholdering), so the
-  hook prompts instead of clobbering.
+  hook prompts instead of clobbering. Since 1.30.2 these warnings reach Claude
+  only with `CCMEMO_LEAK_SCAN_WARN=1`: on ordinary entries the scan flags the
+  frontmatter `id`, the repository's own name and links between entries
+  (LevNas/ccmemo#63). The redaction notice is always delivered.
 
 The pattern set lives in `hooks/lib/redact.py` and mirrors a TypeScript
 counterpart — the two implementations share the SPEC, not the code. One
