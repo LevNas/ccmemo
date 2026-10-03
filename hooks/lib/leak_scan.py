@@ -124,14 +124,17 @@ def scan(text: str, own_repo: str | None = None) -> list[Finding]:
     repo_pattern = _private_repo_pattern()
     own = (own_repo or "").lower()
     lines = text.splitlines()
-    in_frontmatter = bool(lines) and lines[0].strip() == "---"
+    # Frontmatter only when the leading --- is closed; a lone opening line
+    # (a horizontal rule) must not hide the rest of the file.
+    fm_end = 0
+    if lines and lines[0].strip() == "---":
+        fm_end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), 0)
     in_fence = False
 
     for idx, line in enumerate(lines):
         lineno = idx + 1
-        if in_frontmatter and idx > 0 and line.strip() == "---":
-            in_frontmatter = False
-        elif not in_frontmatter and FENCE.match(line):
+        in_frontmatter = idx <= fm_end and fm_end > 0
+        if not in_frontmatter and FENCE.match(line):
             in_fence = not in_fence
 
         for m in UUID.finditer(line):

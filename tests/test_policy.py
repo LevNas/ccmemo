@@ -174,6 +174,8 @@ def test_leak_scan_entry_profile_frontmatter_id():
     assert _kinds(f"---\nid: {uuid}\nsession: {uuid}\n---\n") == ["uuid"]
     assert _kinds(f"---\ntitle: x\n---\nid: {uuid}\n") == ["uuid"]
     assert _kinds(f"id: {uuid}\n") == ["uuid"]  # no frontmatter
+    # an unclosed leading --- is not frontmatter
+    assert _kinds(f"---\nid: {uuid}\n```\n${{X}}\n```\n") == ["uuid"]
 
 
 def test_leak_scan_entry_profile_own_repo():
