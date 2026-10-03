@@ -15,6 +15,17 @@ Detected shapes:
     private-repo-name     -- main-brain / private repo names, supplied at
                              RUNTIME via $CCMEMO_PRIVATE_REPO_NAMES so the name
                              is never baked into this public source file
+
+Entry profile (1.30.3, #63). Run over a real knowledge base, the scan flagged
+every entry, almost all of it noise. These are not findings:
+    * the frontmatter ``id:`` UUID -- the entry's own identifier;
+    * a private repo name inside that same repository -- callers pass
+      ``own_repo`` (the name only leaks when the text leaves the repository);
+    * ``${VAR}`` inside inline code or a fenced block -- documentation of a
+      variable, not a template that failed to expand;
+    * word-like tokens that only look high-entropy because ``/`` joins them
+      (relative links between entries, URL paths, ENV_NAME=). See
+      ``_looks_like_base64_secret``.
 """
 
 from __future__ import annotations
@@ -30,6 +41,15 @@ UUID = re.compile(
 HOME_PATH = re.compile(r"/home/([^/\s]+)/")
 UNEXPANDED_PLACEHOLDER = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 HIGH_ENTROPY = re.compile(r"\b[A-Za-z0-9+/_-]{40,}={0,2}\b")
+FRONTMATTER_ID = re.compile(r"^id:\s*[\"']?[0-9a-f-]{36}[\"']?\s*$", re.IGNORECASE)
+INLINE_CODE = re.compile(r"`[^`]*`")
+FENCE = re.compile(r"^\s*(```|~~~)")
+
+# Below this many character-class runs per letter/digit, a token reads as
+# words. Calibrated 2026-10-03 (#63): 833 of 837 mixed-case path tokens from a
+# real knowledge base and its task notes fall below it; of 45,000 random
+# base64 / base64url tokens (30-69 bytes), 2 do (random minimum 0.286).
+WORD_LIKE_RUN_RATIO = 0.3
 
 # Names that, when present, indicate a private repo name leaked into a public
 # entry. Sourced at runtime so no private name is ever committed here.
@@ -59,6 +79,20 @@ def _private_repo_pattern() -> re.Pattern[str] | None:
     return re.compile(rf"\b({alternation})\b", re.IGNORECASE)
 
 
+def _class_run_ratio(token: str) -> float:
+    """Runs of the same class (lower / upper / digit) per letter or digit.
+
+    Words keep a class for several characters (low ratio); random base64
+    switches about every 1.6 characters (around 0.6).
+    """
+    classes = ["l" if c.islower() else "u" if c.isupper() else "d"
+               for c in token if c.isalnum()]
+    if not classes:
+        return 0.0
+    runs = 1 + sum(1 for a, b in zip(classes, classes[1:]) if a != b)
+    return runs / len(classes)
+
+
 def _looks_like_base64_secret(token: str) -> bool:
     """Whether a high-entropy match is a base64-ish secret rather than a hash.
 
@@ -67,6 +101,12 @@ def _looks_like_base64_secret(token: str) -> bool:
     """
     if re.fullmatch(r"[0-9a-f]+", token, re.IGNORECASE):
         return False  # pure hex -> almost certainly a hash / SHA
+    if not any(c.isupper() for c in token) and not any(c in token for c in "+="):
+        # Lower case, digits and / only: a path such as an entry link. Random
+        # base64 of 40+ characters has no upper case with odds of about 1e-9.
+        return False
+    if _class_run_ratio(token) < WORD_LIKE_RUN_RATIO:
+        return False  # words joined by / - _ (URL paths, ENV_NAME=)
     has_b64_signal = any(c in token for c in "+/=")
     has_upper = any(c.isupper() for c in token)
     has_lower = any(c.islower() for c in token)
@@ -74,15 +114,29 @@ def _looks_like_base64_secret(token: str) -> bool:
     return has_b64_signal or (has_upper and has_lower and has_digit)
 
 
-def scan(text: str) -> list[Finding]:
-    """Scan entry text for leak-prone shapes. Returns advisory findings."""
+def scan(text: str, own_repo: str | None = None) -> list[Finding]:
+    """Scan entry text for leak-prone shapes. Returns advisory findings.
+
+    ``own_repo`` is the name of the repository the text lives in; a private
+    repo name equal to it is not reported (compared case-insensitively).
+    """
     findings: list[Finding] = []
     repo_pattern = _private_repo_pattern()
+    own = (own_repo or "").lower()
+    lines = text.splitlines()
+    in_frontmatter = bool(lines) and lines[0].strip() == "---"
+    in_fence = False
 
-    for idx, line in enumerate(text.splitlines()):
+    for idx, line in enumerate(lines):
         lineno = idx + 1
+        if in_frontmatter and idx > 0 and line.strip() == "---":
+            in_frontmatter = False
+        elif not in_frontmatter and FENCE.match(line):
+            in_fence = not in_fence
 
         for m in UUID.finditer(line):
+            if in_frontmatter and FRONTMATTER_ID.match(line):
+                continue  # the entry's own identifier
             findings.append(
                 Finding(
                     lineno,
@@ -105,7 +159,10 @@ def scan(text: str) -> list[Finding]:
                 )
             )
 
+        code_spans = [s.span() for s in INLINE_CODE.finditer(line)]
         for m in UNEXPANDED_PLACEHOLDER.finditer(line):
+            if in_fence or any(a <= m.start() < b for a, b in code_spans):
+                continue  # a variable written about, not a failed expansion
             findings.append(
                 Finding(
                     lineno,
@@ -129,6 +186,8 @@ def scan(text: str) -> list[Finding]:
 
         if repo_pattern is not None:
             for m in repo_pattern.finditer(line):
+                if own and m.group(0).lower() == own:
+                    continue  # the repository's own name, inside it
                 findings.append(
                     Finding(
                         lineno,

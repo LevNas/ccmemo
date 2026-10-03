@@ -235,10 +235,18 @@ sanitize. Hybrid behaviour (chosen 2026-06-21):
 - **Leak-prone shapes** — UUIDs, home paths, `${…}`, base64-ish strings,
   private repo names (`CCMEMO_PRIVATE_REPO_NAMES`) — are reported as warnings
   only; masking them correctly needs human context (placeholdering), so the
-  hook prompts instead of clobbering. Since 1.30.2 these warnings reach Claude
-  only with `CCMEMO_LEAK_SCAN_WARN=1`: on ordinary entries the scan flags the
-  frontmatter `id`, the repository's own name and links between entries
-  (LevNas/ccmemo#63). The redaction notice is always delivered.
+  hook prompts instead of clobbering. `CCMEMO_LEAK_SCAN_WARN=0` turns the
+  warnings off; the redaction notice is always delivered.
+- **Entry profile** (1.30.3, LevNas/ccmemo#63) — run over a real knowledge
+  base, the scan flagged every entry. These are not findings: the
+  frontmatter `id` UUID; a private repo name inside the repository of that
+  name (callers pass the main checkout's directory name as `own_repo`);
+  `${…}` inside inline code or a fenced block; word-like tokens joined by
+  `/`, `-` or `_` (entry links, URL paths, `ENV_NAME=`). The last is a
+  class-run ratio below 0.3, calibrated against the corpus and 45,000
+  random base64 tokens (`hooks/lib/leak_scan.py`). Leak-scan is
+  ccmemo-only — ccgate's policy-core implements redact, not leak-scan — so
+  this profile does not diverge from a second implementation.
 
 The pattern set lives in `hooks/lib/redact.py` and mirrors a TypeScript
 counterpart — the two implementations share the SPEC, not the code. One

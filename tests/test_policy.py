@@ -162,6 +162,56 @@ def test_redact_op_ref_keep_names_case_and_noncanonical_tail():
     assert f"{PH},defsegment/field" in out2, out2
 
 
+def _kinds(text, **kw):
+    return [f.kind for f in leak_scan.scan(text, **kw)]
+
+
+def test_leak_scan_entry_profile_frontmatter_id():
+    uuid = "6f1c2a4e-0d3b-4c5e-9a7f-1b2c3d4e5f60"
+    assert _kinds(f"---\nid: {uuid}\ntitle: x\n---\nbody\n") == []
+    assert _kinds(f"---\nid: \"{uuid}\"\n---\n") == []
+    # a UUID anywhere else is still a finding
+    assert _kinds(f"---\nid: {uuid}\nsession: {uuid}\n---\n") == ["uuid"]
+    assert _kinds(f"---\ntitle: x\n---\nid: {uuid}\n") == ["uuid"]
+    assert _kinds(f"id: {uuid}\n") == ["uuid"]  # no frontmatter
+
+
+def test_leak_scan_entry_profile_own_repo():
+    key = "CCMEMO_PRIVATE_REPO_NAMES"
+    prev = os.environ.get(key)
+    os.environ[key] = "my-private-brain"
+    try:
+        text = "see My-Private-Brain/.claude\n"
+        assert _kinds(text) == ["private-repo-name"]
+        assert _kinds(text, own_repo="my-private-brain") == []
+        assert _kinds(text, own_repo="public-plugin") == ["private-repo-name"]
+    finally:
+        if prev is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prev
+
+
+def test_leak_scan_entry_profile_placeholder_in_code():
+    assert _kinds("set `${CLAUDE_PROJECT_DIR}` in hooks\n") == []
+    assert _kinds("```bash\necho \"${nl}\"\n```\n") == []
+    assert _kinds("~~~\n${X}\n~~~\n") == []
+    assert _kinds("session ${CLAUDE_SESSION_ID} leaked\n") == ["unexpanded-placeholder"]
+    assert _kinds("```\nx\n```\nafter ${Y}\n") == ["unexpanded-placeholder"]
+
+
+def test_leak_scan_entry_profile_word_like_tokens():
+    entry_link = "2026/10/20261003-005555-alice-git-push-gate-adr-destination.md"
+    url_path = "github.com/LevNas/ccmemo/blob/main/hooks/lib/leak_scan.py"
+    env_name = "CCMEMO_LEAK_SCAN_WARN_AND_SOMETHING_LONGER_THAN_FORTY="
+    for text in (f"[x]({entry_link})", url_path, env_name):
+        assert "base64-secret" not in _kinds(text), text
+    # random base64 (fixed literals, not generated) is still flagged
+    for secret in (B64_SECRET, "q7Xk2/Vb9Rt+Lm4Zp0Wc8Ny3Hd6Js1Ge5Ua2Ko9Fi7=",
+                   "Zx3_Qp8-Lr2Mv7Tn4Bk9Wd1Hs6Yc0Jf5Ga3Ue8Ro2Pi7"):
+        assert "base64-secret" in _kinds(f"blob {secret}"), secret
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

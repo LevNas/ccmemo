@@ -70,17 +70,17 @@ def test_redact_reports_as_context():
             check("redact: value masked in the file", "alice@example.com" not in f.read())
 
 
-def test_leak_scan_only_on_request():
+def test_leak_scan_on_by_default():
     with tempfile.TemporaryDirectory() as base:
         entries = os.path.join(base, ".claude", "knowledge", "entries")
         os.makedirs(entries)
         path = os.path.join(entries, "20261003-000000-alice-y.md")
         with open(path, "w", encoding="utf-8") as f:
-            f.write("---\nid: 6f1c2a4e-0d3b-4c5e-9a7f-1b2c3d4e5f60\n---\n")
+            f.write("---\ntitle: y\n---\nsession 6f1c2a4e-0d3b-4c5e-9a7f-1b2c3d4e5f60\n")
         code, out = run_hook("postwrite_redact_entries.py", path)
-        check("leak-scan: silent by default (ccmemo#63)", code == 0 and out.strip() == "", out)
-        code, out = run_hook("postwrite_redact_entries.py", path, CCMEMO_LEAK_SCAN_WARN="1")
-        check("leak-scan: delivered with CCMEMO_LEAK_SCAN_WARN=1", "leak-scan" in context(out), out)
+        check("leak-scan: delivered by default", "leak-scan" in context(out), out)
+        code, out = run_hook("postwrite_redact_entries.py", path, CCMEMO_LEAK_SCAN_WARN="0")
+        check("leak-scan: silent with CCMEMO_LEAK_SCAN_WARN=0", code == 0 and out.strip() == "", out)
 
 
 def test_no_hook_emits_an_unknown_decision():
@@ -95,7 +95,7 @@ def test_no_hook_emits_an_unknown_decision():
 if __name__ == "__main__":
     test_md_links_reports_as_context()
     test_redact_reports_as_context()
-    test_leak_scan_only_on_request()
+    test_leak_scan_on_by_default()
     test_no_hook_emits_an_unknown_decision()
     if FAILURES:
         print(f"\n{len(FAILURES)} failure(s): {', '.join(FAILURES)}")

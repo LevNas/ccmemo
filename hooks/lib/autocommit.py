@@ -22,7 +22,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 
-from . import leak_scan
+from . import leak_scan, repo
 
 # Only these paths are ever staged or committed. `git add -A` runs with these
 # paths as its pathspec, and the commit is limited to them too, so unrelated
@@ -120,6 +120,8 @@ def _changed_files(cwd: str) -> list[_Change]:
 def _scan_files(cwd: str, paths: list[str]) -> list[tuple[str, "leak_scan.Finding"]]:
     """Run leak_scan over the current body of each existing (non-deleted) file."""
     findings: list[tuple[str, leak_scan.Finding]] = []
+    checkout = repo.main_checkout(cwd)
+    own_repo = os.path.basename(checkout) if checkout else None
     for rel in paths:
         full = os.path.join(cwd, rel)
         if not os.path.isfile(full):
@@ -129,7 +131,7 @@ def _scan_files(cwd: str, paths: list[str]) -> list[tuple[str, "leak_scan.Findin
                 text = f.read()
         except OSError:
             continue
-        for finding in leak_scan.scan(text):
+        for finding in leak_scan.scan(text, own_repo=own_repo):
             findings.append((rel, finding))
     return findings
 

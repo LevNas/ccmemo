@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.30.3] - 2026-10-03
+
+Leak-scan stops flagging ordinary knowledge entries, and its warnings reach
+Claude again by default. Set `CCMEMO_LEAK_SCAN_WARN=0` to keep them off.
+
+### Fixed
+- `hooks/lib/leak_scan.py` flagged every entry of a real knowledge base
+  (313 of 313). An entry profile drops what is not a leak: the frontmatter
+  `id` UUID; a private repo name inside the repository of that name
+  (`scan(text, own_repo=...)`, which the redact hook and the auto-commit pass
+  as the main checkout's directory name); `${…}` inside inline code or a
+  fenced block; and tokens that only looked high-entropy because `/`, `-` or
+  `_` join words (entry links, URL paths, `ENV_NAME=`). A token is word-like
+  when it has no upper case and no `+`/`=`, or when it switches between
+  lower case, upper case and digits less than 0.3 times per character: 833
+  of 837 mixed-case path tokens in the corpus fall below that, 2 of 45,000
+  random base64 tokens do. After the change 17 of 313 entries are flagged,
+  mostly home paths that name a user. `${CLAUDE_PLUGIN_ROOT}` written in
+  prose outside backticks is still reported.
+- The auto-commit's leak-scan gate uses the same profile, so it no longer
+  blocks on entry links and the repository's own name. Absolute home paths
+  in task notes are still findings.
+
+### Changed
+- `CCMEMO_LEAK_SCAN_WARN` defaults to on again (1.30.2 turned it off until
+  the scan was calibrated); `0` turns the warnings off.
+
 ## [1.30.2] - 2026-10-03
 
 Warnings from the PostToolUse hooks now reach Claude. Nothing to do.
