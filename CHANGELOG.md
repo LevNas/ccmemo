@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.30.4] - 2026-10-03
+
+### Fixed
+- The PostToolUse link checker reported links written as examples inside
+  inline code as broken (#65), for instance `[title](path)` in this
+  changelog, the skill procedures and the docs. It now blanks code spans
+  before extracting links: backtick runs of the same length, which may
+  continue onto the next line but no further. CommonMark lets a span run on
+  through its paragraph; the cap keeps one stray backtick in a tight list
+  from pairing with backticks further down and hiding the real links
+  between them. Fenced blocks are
+  removed first, so a fence is never read as a code span, and `~~~` fences
+  count as well as backtick fences. Over this repository and one knowledge
+  base, 18 example links are no longer reported and no new report appears.
+
 ## [1.30.3] - 2026-10-03
 
 Leak-scan stops flagging ordinary knowledge entries, and its warnings reach

@@ -19,24 +19,42 @@ from lib.hook_output import post_tool_use_context  # noqa: E402
 
 PENDING_ANNOTATION = re.compile(r"<!--\s*pending:\s*#(\d+)\s*-->")
 
+# A run of backticks closed by a run of the same length. CommonMark lets a
+# span run on through its paragraph; here it may continue onto the next line
+# only, so one stray backtick in a tight list cannot pair with backticks
+# further down and hide the real links between them.
+CODE_SPAN = re.compile(
+    r"(?<!`)(`+)(?!`)[^\n]*?(?:\n(?![ \t]*\n)[^\n]*?)?(?<!`)\1(?!`)")
+
+
+def prose_lines(content: str) -> list[str]:
+    """Lines with code removed, so a link written as an example is not checked.
+
+    Fenced blocks become empty lines first; inline code spans are then
+    replaced with spaces. Line numbers are kept.
+    """
+    kept = []
+    in_fence = False
+    for line in content.splitlines():
+        if line.strip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            kept.append("")
+        else:
+            kept.append("" if in_fence else line)
+    prose = CODE_SPAN.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), "\n".join(kept))
+    return prose.split("\n")
+
 
 def extract_relative_links(content: str) -> list[tuple[int, str, str, bool, str]]:
     """Extract relative links from Markdown content.
 
     Returns list of (lineno, text, target, is_annotated, issue_ref).
     """
-    lines = content.splitlines()
+    lines = prose_lines(content)
     links = []
-    in_code_block = False
 
     for lineno_idx, line in enumerate(lines):
         lineno = lineno_idx + 1
-
-        if line.strip().startswith("```"):
-            in_code_block = not in_code_block
-            continue
-        if in_code_block:
-            continue
 
         for match in re.finditer(r"\[([^\]]*)\]\(([^)]+)\)", line):
             text, target = match.group(1), match.group(2)
