@@ -30,11 +30,12 @@ def check(name, cond, detail=""):
         FAILURES.append(name)
 
 
-def run_hook(script, file_path):
+def run_hook(script, file_path, **env):
     payload = {"tool_name": "Write", "tool_input": {"file_path": file_path}}
     proc = subprocess.run([sys.executable, os.path.join(HOOKS, script)],
                           input=json.dumps(payload), capture_output=True,
-                          text=True, timeout=30)
+                          text=True, timeout=30,
+                          env={**os.environ, "CCMEMO_LEAK_SCAN_WARN": "", **env})
     return proc.returncode, proc.stdout
 
 
@@ -69,8 +70,21 @@ def test_redact_reports_as_context():
             check("redact: value masked in the file", "alice@example.com" not in f.read())
 
 
+def test_leak_scan_only_on_request():
+    with tempfile.TemporaryDirectory() as base:
+        entries = os.path.join(base, ".claude", "knowledge", "entries")
+        os.makedirs(entries)
+        path = os.path.join(entries, "20261003-000000-alice-y.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("---\nid: 6f1c2a4e-0d3b-4c5e-9a7f-1b2c3d4e5f60\n---\n")
+        code, out = run_hook("postwrite_redact_entries.py", path)
+        check("leak-scan: silent by default (ccmemo#63)", code == 0 and out.strip() == "", out)
+        code, out = run_hook("postwrite_redact_entries.py", path, CCMEMO_LEAK_SCAN_WARN="1")
+        check("leak-scan: delivered with CCMEMO_LEAK_SCAN_WARN=1", "leak-scan" in context(out), out)
+
+
 def test_no_hook_emits_an_unknown_decision():
-    # "block" is the only decision value the hook events accept.
+    # PostToolUse and Stop accept "block" as their only decision value.
     pattern = re.compile(r"""["']decision["']\s*:\s*["'](\w+)["']""")
     for path in sorted(glob.glob(os.path.join(HOOKS, "*.py"))):
         with open(path, encoding="utf-8") as f:
@@ -81,6 +95,7 @@ def test_no_hook_emits_an_unknown_decision():
 if __name__ == "__main__":
     test_md_links_reports_as_context()
     test_redact_reports_as_context()
+    test_leak_scan_only_on_request()
     test_no_hook_emits_an_unknown_decision()
     if FAILURES:
         print(f"\n{len(FAILURES)} failure(s): {', '.join(FAILURES)}")

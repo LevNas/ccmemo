@@ -17,10 +17,18 @@ Warnings from the PostToolUse hooks now reach Claude. Nothing to do.
   reaches Claude next to the tool result (`hooks/lib/hook_output.py`).
   Redaction itself was not affected: the file was always rewritten.
 
+### Changed
+- The redact hook's leak-scan warnings stay out of Claude's context unless
+  `CCMEMO_LEAK_SCAN_WARN=1`, as they in effect were before this release. On
+  ordinary entries the scan flags the frontmatter `id`, the repository's own
+  name and links between entries, so delivering them would add a list of
+  false positives to every entry write (#63). The redaction notice is always
+  delivered.
+
 ### Added
 - `tests/test_posttooluse_output.py`: the output shape of the link and
-  redaction hooks, and a check that no hook emits a decision other than
-  `"block"`.
+  redaction hooks, leak-scan warnings only with `CCMEMO_LEAK_SCAN_WARN=1`,
+  and a check that no hook emits a decision other than `"block"`.
 
 ## [1.30.1] - 2026-10-02
 
