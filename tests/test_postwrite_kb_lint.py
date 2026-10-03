@@ -30,6 +30,12 @@ def run_hook(tool_name, file_path):
     return proc.returncode, proc.stdout
 
 
+def context(out):
+    """The additionalContext of a PostToolUse output; '' when the shape is wrong."""
+    out = json.loads(out).get("hookSpecificOutput", {})
+    return out.get("additionalContext", "") if out.get("hookEventName") == "PostToolUse" else ""
+
+
 # Schema-3 identity + trust lines for fixtures that must lint clean.
 S3 = ("id: 6f1c2a4e-0d3b-4c5e-9a7f-1b2c3d4e5f60\n"
       "generated:\n  by: human:alice\n  at: 2026-07-04T10:00:00+09:00\n")
@@ -53,9 +59,8 @@ def test_findings_reported_as_warning():
             f.write('---\ntitle: Bad\ntags: "#pitfall"\n' + S3 + '---\n\n- see: [x](2026/07/nope.md)\n')
         code, out = run_hook("Write", path)
         check("exit 0", code == 0, code)
-        data = json.loads(out)
-        check("decision warn", data.get("decision") == "warn", out)
-        reason = data.get("reason", "")
+        reason = context(out)
+        check("reported as PostToolUse additionalContext", bool(reason), out)
         check("missing-description reported", "missing-description" in reason, reason)
         check("unlabeled-link reported", "unlabeled-link" in reason, reason)
         check("broken-link reported", "broken-link" in reason, reason)
@@ -69,16 +74,15 @@ def test_undeclared_corpus_gets_one_line_advisory():
         with open(path, "w", encoding="utf-8") as f:
             f.write('---\ntitle: Old\ntags: "#pitfall"\n---\n\nOld entry, no description.\n')
         code, out = run_hook("Edit", path)
-        data = json.loads(out)
-        reason = data.get("reason", "")
-        check("advisory-only: warn with one line", data.get("decision") == "warn"
+        reason = context(out)
+        check("advisory-only: one line of context", bool(reason)
               and reason.count("\n") == 0 and "3 advisory" in reason, reason)
         check("advisory-only: names the declaration", "schema_version" in reason, reason)
         # an enforced finding plus advisory ones: list + count tail
         with open(path, "a", encoding="utf-8") as f:
             f.write("- see: [x](2026/07/nope.md)\n")
         code, out = run_hook("Edit", path)
-        reason = json.loads(out).get("reason", "")
+        reason = context(out)
         check("mixed: enforced listed", "broken-link" in reason, reason)
         check("mixed: advisory counted, not listed",
               "+4 advisory" in reason and "missing-description:" not in reason, reason)

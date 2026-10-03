@@ -14,6 +14,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.hook_output import post_tool_use_context  # noqa: E402
+
 PENDING_ANNOTATION = re.compile(r"<!--\s*pending:\s*#(\d+)\s*-->")
 
 
@@ -140,11 +143,7 @@ def main() -> None:
         annotated_list = "\n".join(f"  - {a}" for a in annotated)
         parts.append(f"\n追跡済み（警告抑制）:\n{annotated_list}")
 
-    result = {
-        "decision": "warn",
-        "reason": "\n".join(parts),
-    }
-    json.dump(result, sys.stdout, ensure_ascii=False)
+    post_tool_use_context("\n".join(parts))
 
 
 if __name__ == "__main__":

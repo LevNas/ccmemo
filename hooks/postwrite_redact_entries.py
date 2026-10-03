@@ -22,6 +22,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import leak_scan, redact  # noqa: E402
+from lib.hook_output import post_tool_use_context  # noqa: E402
 
 ENTRIES_MARKER = (
     os.sep + ".claude" + os.sep + "knowledge" + os.sep + "entries" + os.sep
@@ -95,8 +96,7 @@ def main() -> None:
             f"上記は自動修正していません。プレースホルダ化や除去を検討してください。"
         )
 
-    result = {"decision": "warn", "reason": "\n\n".join(parts)}
-    json.dump(result, sys.stdout, ensure_ascii=False)
+    post_tool_use_context("\n\n".join(parts))
 
 
 if __name__ == "__main__":
