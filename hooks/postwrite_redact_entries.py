@@ -10,9 +10,9 @@ Hybrid behaviour (chosen 2026-06-21):
     email) are masked in place — the file is rewritten with ``‹redacted›``.
   * Leak-prone *shapes* (UUID, home-path, ${...}, base64-ish, private repo
     name) are reported as warnings only — masking them needs human context
-    (placeholdering), so we prompt instead of clobbering. Only with
-    CCMEMO_LEAK_SCAN_WARN=1 until the scan stops flagging ordinary entries
-    (LevNas/ccmemo#63).
+    (placeholdering), so we prompt instead of clobbering. The scan uses the
+    entry profile in lib/leak_scan.py; CCMEMO_LEAK_SCAN_WARN=0 turns the
+    warnings off.
 
 This hook is registered FIRST in the PostToolUse Write|Edit chain so that the
 in-place redaction completes before any sibling hook re-reads the file.
@@ -23,7 +23,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import leak_scan, redact  # noqa: E402
+from lib import leak_scan, redact, repo  # noqa: E402
 from lib.hook_output import post_tool_use_context  # noqa: E402
 
 ENTRIES_MARKER = (
@@ -72,13 +72,14 @@ def main() -> None:
         else:
             content = redacted
 
-    # 2. Leak-scan the (now redacted) content for leak-prone shapes. Off unless
-    # CCMEMO_LEAK_SCAN_WARN=1: on ordinary entries the scan flags the
-    # frontmatter id, the repository's own name and links between entries
-    # (LevNas/ccmemo#63), and those findings would land in Claude's context
-    # on every entry write.
-    findings = (leak_scan.scan(content)
-                if os.environ.get("CCMEMO_LEAK_SCAN_WARN") == "1" else [])
+    # 2. Leak-scan the (now redacted) content for leak-prone shapes, unless
+    # CCMEMO_LEAK_SCAN_WARN=0. The repository's own name is not a leak inside
+    # it, so the scan gets the main checkout's directory name.
+    findings = []
+    if os.environ.get("CCMEMO_LEAK_SCAN_WARN") != "0":
+        checkout = repo.main_checkout(file_path)
+        findings = leak_scan.scan(
+            content, own_repo=os.path.basename(checkout) if checkout else None)
 
     if not hits and not findings:
         return
