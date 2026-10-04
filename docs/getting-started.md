@@ -217,18 +217,18 @@ that path, the post-merge re-index hook for teams, and the NixOS note are in
 - [claude-md-examples.md](claude-md-examples.md) — wiring ccmemo conventions
   into your project's CLAUDE.md
 
-## Scale it with ccorch
+## Scale it with ccharness (optional)
 
-ccmemo alone covers the single-session loop. Its sibling plugin
-[ccorch](https://github.com/LevNas/ccorch) — same marketplace — adds subagent
-orchestration, and two of its nine bundled agent types are built specifically
-around a ccmemo-shaped knowledge base:
+ccmemo alone covers the single-session loop. If you also install its sibling
+plugin [ccharness](https://github.com/LevNas/ccharness) — same marketplace —
+you get a catalog of subagent types with the model and effort pinned per type,
+and two of them are built specifically around a ccmemo-shaped knowledge base:
 
-- **`ccorch:kb-integrator`** reads ten or more entries and returns a cited
+- **`ccharness:kb-integrator`** reads ten or more entries and returns a cited
   synthesis. This is what keeps a *growing* knowledge base usable: "what do we
   already know about X?" stays a one-question sweep even after the entries
   outgrow what you would re-read by hand.
-- **`ccorch:knowledge-recorder`** drafts entries following your
+- **`ccharness:knowledge-recorder`** drafts entries following your
   `/record-knowledge` conventions. A large orchestrated work session can end
   with its discoveries drafted as entries in parallel — while the decision of
   *what* is worth recording stays with you.
@@ -238,8 +238,8 @@ scale → capture what the waves discovered → recall it before deciding anythi
 twice. ccmemo's `/plan-task` spans the sessions in between.
 
 ```
-/plugin install ccorch@levnas-plugins
+/plugin install ccharness@levnas-plugins
 ```
 
-Setup walkthrough on the ccorch side:
-[ccorch docs/getting-started.md](https://github.com/LevNas/ccorch/blob/main/docs/getting-started.md).
+Setup is described in the
+[ccharness README](https://github.com/LevNas/ccharness#readme).

@@ -181,21 +181,21 @@ uv run "$scripts/kb_search.py" .claude/knowledge/entries/ "探したい内容"
 - [link-graph.md](link-graph.md): `see:` リンクグラフの構造クエリ（ハブ、孤立エントリ、最短経路）
 - [claude-md-examples.ja.md](claude-md-examples.ja.md): プロジェクトの CLAUDE.md への組み込みパターン
 
-## ccorch でスケールさせる
+## ccharness でスケールさせる（任意）
 
 ccmemo 単体がカバーするのは、1セッションで完結する記録と呼び出しのループです。
-同じマーケットプレイスの姉妹プラグイン [ccorch](https://github.com/LevNas/ccorch) はサブエージェントオーケストレーションを加えます。
-同梱される9種のエージェント型のうち、次の2つは ccmemo 形式のナレッジベースに合わせて作られています。
+同じマーケットプレイスの姉妹プラグイン [ccharness](https://github.com/LevNas/ccharness) も入れると、型ごとにモデルと effort を固定したサブエージェントの型が使えます。
+そのうち次の2つは、ccmemo 形式のナレッジベースに合わせて作られています。
 
-- **`ccorch:kb-integrator`**：10件以上のエントリを読み、出典付きの統合を返します。エントリが手で読み返せる量を超えても、「X について何をすでに知っているか」の確認が一問で済み続けます。
-- **`ccorch:knowledge-recorder`**：`/record-knowledge` の規約に沿ってエントリを起草します。大きな作業セッションの発見を並列で下書きさせつつ、何を記録するかの判断は自分の手に残せます。
+- **`ccharness:kb-integrator`**：10件以上のエントリを読み、出典付きの統合を返します。エントリが手で読み返せる量を超えても、「X について何をすでに知っているか」の確認が一問で済み続けます。
+- **`ccharness:knowledge-recorder`**：`/record-knowledge` の規約に沿ってエントリを起草します。大きな作業セッションの発見を並列で下書きさせつつ、何を記録するかの判断は自分の手に残せます。
 
 2つを併用すると、どちらか単体では閉じないループが閉じます。
 スケールした作業をオーケストレーションし、各ウェーブの発見を記録し、次に判断する前に呼び出す、という循環です。
 セッションの合間は ccmemo の `/plan-task` がつなぎます。
 
 ```
-/plugin install ccorch@levnas-plugins
+/plugin install ccharness@levnas-plugins
 ```
 
-ccorch 側のセットアップは [ccorch の導入ガイド（日本語）](https://github.com/LevNas/ccorch/blob/main/docs/getting-started.ja.md) を参照してください。
+セットアップは [ccharness の README](https://github.com/LevNas/ccharness#readme)（英語）を参照してください。

@@ -110,7 +110,7 @@ All subcommands and the pre-commit lint: [docs/link-graph.md](docs/link-graph.md
 
 - [docs/getting-started.md](docs/getting-started.md) — zero-to-first-recall
   walkthrough: repository layout (ghq), user-scope install, scaffolding, and
-  scaling up with ccorch ([日本語](docs/getting-started.ja.md))
+  scaling up with ccharness (optional) ([日本語](docs/getting-started.ja.md))
 - [docs/usage.md](docs/usage.md) — day-to-day usage: searching entries, reviewing
   the base, plans & tasks, customization, manual install
   ([日本語](docs/usage.ja.md))
