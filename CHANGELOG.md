@@ -26,6 +26,9 @@ All notable changes to this project will be documented in this file.
   ripgrep-only fallback the recall skill describes: it never opens the
   index, ranks by the lexical arm alone (`--kind` still applies, from the
   path rules), and says on stderr that `uv run` gives the hybrid search.
+  Filters that read stored metadata (`--status`, `--tag`, `--type`,
+  `--created-from`, `--created-to`, `--verified`) drop every hit there; the
+  CLI says so when one is given, instead of a bare "no hits".
 
 ## [1.30.4] - 2026-10-03
 

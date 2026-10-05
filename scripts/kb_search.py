@@ -741,6 +741,16 @@ def main(argv: list[str]) -> int:
               "search (no vector arm, no index refresh, no stored titles or edges). "
               "Run with `uv run` for the hybrid search (recall-knowledge, Step 3a).",
               file=sys.stderr)
+        needs_meta = [flag for flag, value in (
+            ("--status", args.status), ("--tag", args.tags), ("--type", args.etype),
+            ("--created-from", args.created_from), ("--created-to", args.created_to),
+            ("--verified", args.verified_min)) if value]
+        if needs_meta:
+            # These read the stored metadata, which the fallback does not open:
+            # every hit fails them. Say so rather than show a bare "no hits".
+            print(f"ccmemo search: {', '.join(needs_meta)} need the index's stored "
+                  "metadata, so every hit is dropped in the ripgrep-only search.",
+                  file=sys.stderr)
 
     results = search(
         root, args.query,

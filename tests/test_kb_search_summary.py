@@ -341,6 +341,16 @@ def test_missing_dependencies():
             except ValueError:
                 hits = r.stdout[-300:]
             check(f"{name}: lexical hit returned", hits == [A], hits)
+            check(f"{name}: no metadata-filter warning without such a filter",
+                  "stored metadata" not in r.stderr, r.stderr[-300:])
+        # Frontmatter filters read stored metadata the fallback never opens:
+        # every hit is dropped, and the CLI says why.
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "kb_search.py"),
+                            str(root), "walrus ledger", "--json", "--status", "active"],
+                           capture_output=True, text=True, env=env, timeout=60)
+        check("missing deps --status: warns that the filter needs the index",
+              r.returncode == 0 and "--status need the index's stored metadata" in r.stderr,
+              (r.returncode, r.stderr[-300:]))
 
 
 if __name__ == "__main__":
