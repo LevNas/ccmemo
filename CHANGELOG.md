@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.30.5] - 2026-10-06
+
+### Fixed
+- `kb_search.py --kind` could return nothing although entries of that kind
+  matched the query (#69). The filter ran after the candidates were taken
+  from the whole index, so a larger corpus of another kind on the same theme
+  filled the vector arm's 40 slots and pushed every query term over the
+  lexical arm's 50-file limit. `--kind` now narrows both arms first: the
+  lexical arm counts hits within the requested kinds, and the vector arm
+  ranks only chunks of those kinds by `vec_distance_L2` (vec0's own metric).
+  The issue proposed over-fetching with a larger `k` instead; sqlite-vec caps
+  `k` at 4096, below the chunk count of a real index, so it could not reach
+  every chunk. Without `--kind` the ranking is unchanged. On one real index,
+  a query that gave 0 `kb` hits now gives 5, and three queries without
+  `--kind` return the same list as before.
+- Run with a plain `python3` that lacks fastembed or sqlite-vec, the CLI now
+  says to use `uv run` and exits 2, instead of a `ModuleNotFoundError`
+  traceback (or, on a root with no index, an empty result).
+
 ## [1.30.4] - 2026-10-03
 
 ### Fixed

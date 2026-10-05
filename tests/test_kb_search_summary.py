@@ -297,12 +297,31 @@ def test_schema_upgrade():
         conn.close()
 
 
+def test_missing_dependencies():
+    """Under a plain python3 without fastembed / sqlite-vec, the CLI says to use
+    `uv run` instead of dying with a traceback (issue #69). Stand-in packages
+    that raise ImportError make the check the same with or without the deps."""
+    import subprocess
+    with tempfile.TemporaryDirectory() as d:
+        for mod in ("fastembed", "sqlite_vec"):
+            os.makedirs(os.path.join(d, "shadow", mod))
+            with open(os.path.join(d, "shadow", mod, "__init__.py"), "w") as f:
+                f.write(f"raise ImportError('blocked for the test', name={mod!r})\n")
+        env = dict(os.environ, PYTHONPATH=os.path.join(d, "shadow"))
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "kb_search.py"), d, "query"],
+                           capture_output=True, text=True, env=env, timeout=60)
+        check("missing deps: exit 2", r.returncode == 2, (r.returncode, r.stderr[-300:]))
+        check("missing deps: points to uv run, no traceback",
+              "uv run" in r.stderr and "Traceback" not in r.stderr, r.stderr[-300:])
+
+
 if __name__ == "__main__":
     test_parse_entry()
     test_handles()
     test_trust_fields()
     test_entry_id_and_format()
     test_schema_upgrade()
+    test_missing_dependencies()
     if FAILURES:
         print(f"\n{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
         sys.exit(1)

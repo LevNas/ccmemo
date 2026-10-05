@@ -39,12 +39,14 @@ covers every document in the repository, each with a `kind` (`kb` for the
 knowledge base, `docs` for the rest, or what the repository's `corpora`
 rules declare). Every hit carries a `[kind]` badge; `--kind` filters. Hits
 with identical content (same sha256) or the same entry `id` are folded into
-one line that lists every location. Ranking never weights by kind.
+one line that lists every location. Ranking never weights by kind. `--kind`
+narrows both arms before ranking, so a larger corpus of another kind cannot
+fill the candidate set and leave nothing of the requested kind (issue #69).
 
 Usage
 -----
     uv run scripts/kb_search.py ROOT "クエリ" [filters...]
-    python3 scripts/kb_search.py ROOT "クエリ" [filters...]
+    python3 scripts/kb_search.py ROOT "クエリ" [filters...]   # only with fastembed + sqlite-vec installed
 
       ROOT                 knowledge entries dir (same arg as kb_index.py)
       --status active      only entries with this status
@@ -149,7 +151,7 @@ def _ascii_terms(query: str, min_len: int = 2) -> list[str]:
 
 
 def lexical_rank(root: Path, query: str, use_mecab: bool,
-                 ctx: "kbi.RootContext | None" = None) -> list[str]:
+                 ctx: "kbi.RootContext | None" = None, kinds=None) -> list[str]:
     """Return entry relpaths ranked by lexical relevance (best first).
 
     Scoring mirrors the existing hook: each matching term contributes 1/hit_count
@@ -160,12 +162,15 @@ def lexical_rank(root: Path, query: str, use_mecab: bool,
     root in `scope: repo`) and only files in the index's candidate set count,
     so an excluded capture or an ignored file never leaks into the ranking.
     Files over the embedding size cap are still found here: rg reads them.
+    `kinds` narrows that set too, so the hit count of a term is taken within
+    the requested kinds and another corpus cannot push it over the limit.
     """
     if not shutil.which("rg"):
         return []
     ctx = ctx or kbi.context(root)
     base = ctx.key_base
-    allowed = {key for _p, key in kbi.candidate_files(root, ctx)}
+    allowed = {key for p, key in kbi.candidate_files(root, ctx)
+               if not kinds or ctx.kind_of(p) in kinds}
     rg_opts: list[str] = []
     if ctx.scope == "repo":
         # The knowledge base lives under a dotdir; rg skips hidden paths by
@@ -225,22 +230,44 @@ def lexical_rank(root: Path, query: str, use_mecab: bool,
 # Vector arm (sqlite-vec KNN)
 # --------------------------------------------------------------------------- #
 
-def vector_rank(root: Path, query: str, k: int = 40) -> list[str]:
-    """Return entry relpaths ranked by best (closest) chunk distance, best first."""
+def vector_rank(root: Path, query: str, k: int = 40, kinds=None) -> list[str]:
+    """Return entry relpaths ranked by best (closest) chunk distance, best first.
+
+    Without `kinds` this is sqlite-vec's KNN over every chunk. With `kinds`
+    the k nearest chunks are taken among those kinds only: KNN cannot filter
+    by kind, and over-fetching does not reach far enough (k is capped at 4096,
+    an index can hold more chunks). vec0 computes every distance anyway, so a
+    filtered scan with the same metric (L2, vec0's default) costs about the same.
+    """
     conn = kbi.open_index(root)
     if conn is None:
         return []
-    qvec = kbi.embed_query(query)
-    rows = conn.execute(
-        """
-        SELECT c.relpath, v.distance
-        FROM vec_chunks v
-        JOIN chunks c ON c.rowid = v.chunk_rowid
-        WHERE v.embedding MATCH ? AND k = ?
-        ORDER BY v.distance
-        """,
-        (kbi.serialize_f32(qvec), k),
-    ).fetchall()
+    qvec = kbi.serialize_f32(kbi.embed_query(query))
+    if kinds:
+        kinds = sorted(set(kinds))
+        rows = conn.execute(
+            f"""
+            SELECT c.relpath, vec_distance_L2(v.embedding, ?) AS distance
+            FROM vec_chunks v
+            JOIN chunks c ON c.rowid = v.chunk_rowid
+            JOIN entries e ON e.relpath = c.relpath
+            WHERE e.kind IN ({", ".join("?" * len(kinds))})
+            ORDER BY distance
+            LIMIT ?
+            """,
+            (qvec, *kinds, k),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT c.relpath, v.distance
+            FROM vec_chunks v
+            JOIN chunks c ON c.rowid = v.chunk_rowid
+            WHERE v.embedding MATCH ? AND k = ?
+            ORDER BY v.distance
+            """,
+            (qvec, k),
+        ).fetchall()
     conn.close()
     # Keep the best (smallest) distance per entry, preserve ascending order.
     best: dict[str, float] = {}
@@ -476,8 +503,8 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
                 # derived columns from the Markdown (no re-embedding).
                 kbi.ensure_metadata(root)
 
-    lex = lexical_rank(root, query, use_mecab, ctx)
-    vec = vector_rank(root, query)
+    lex = lexical_rank(root, query, use_mecab, ctx, kinds=kinds)
+    vec = vector_rank(root, query, kinds=kinds)
     fused = rrf_fuse(lex, vec)
 
     # Expand see: from the current top before filtering.
@@ -694,6 +721,14 @@ def main(argv: list[str]) -> int:
     root = Path(args.root).expanduser().resolve()
     if not root.is_dir():
         print(f"error: not a directory: {root}", file=sys.stderr)
+        return 2
+    try:
+        import fastembed  # noqa: F401
+        import sqlite_vec  # noqa: F401
+    except ImportError as e:
+        print(f"error: {e.name} is not installed. Run this script with `uv run`, which "
+              "installs the dependencies declared at its top (recall-knowledge, Step 3a).",
+              file=sys.stderr)
         return 2
 
     results = search(

@@ -703,6 +703,64 @@ def test_index(repo, wt):
         check("git unavailable: docs rows kept", n == 10, n)
 
 
+CROWD_KB = f"{KB}/2026/09/20260901-000009-user-walrus.md"
+CROWD_QUERY = "reconcile the walrus migration ledger before the tide report"
+
+
+def make_crowding_fixture(base):
+    """One kb entry and 60 docs on the same theme, the docs closer to the query.
+
+    Every query term hits all 61 files (over the lexical arm's 50-file limit) and
+    the docs fill the vector arm's 40 slots, so without `--kind` narrowing the
+    candidates nothing of kind `kb` is left to filter (issue #69)."""
+    repo = os.path.join(base, "crowd")
+    files = {
+        ".gitignore": ".claude/knowledge/.index/\n",
+        CROWD_KB: _entry("99999999-9999-4999-8999-999999999999", "Walrus ledger drift",
+                         "Open when the walrus migration ledger drifts from the tide report.",
+                         "When the walrus migration ledger drifts, reconcile it against the "
+                         "tide report and note who signed the correction."),
+    }
+    for i in range(60):
+        files[f"docs/walrus-{i:02d}.md"] = (
+            f"Reconcile the walrus migration ledger before the tide report (note {i}).\n")
+    for rel, text in files.items():
+        path = os.path.join(repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    r = _git(repo, "commit", "-q", "-m", "fixture")
+    assert r.returncode == 0, r.stderr
+    return repo
+
+
+def test_kind_crowding(base):
+    try:
+        import sqlite_vec  # noqa: F401
+        import fastembed  # noqa: F401
+    except ImportError as exc:
+        print(f"skip kind crowding tests ({exc.name} not importable)")
+        return
+    repo = make_crowding_fixture(base)
+    root = kb_root(repo)
+    with scoped("repo", CCMEMO_KB_INDEX=None):
+        kbi.reindex(root, verbose=False)
+        # The fixture reproduces the issue: no kb entry among the candidates.
+        hits = _search(root, CROWD_QUERY, top=200)
+        check("crowding: kb absent without --kind",
+              hits and not any(h["kind"] == "kb" for h in hits), [(h["relpath"], h["kind"]) for h in hits][:5])
+        hits = _search(root, CROWD_QUERY, kinds=["kb"])
+        check("crowding: --kind kb finds the kb entry",
+              [h["relpath"] for h in hits] == [CROWD_KB], [h["relpath"] for h in hits])
+        check("crowding: lexical arm counts hits within the kind",
+              ks.lexical_rank(root, CROWD_QUERY, False, kinds=["kb"]) == [CROWD_KB])
+        # Same metric: the filtered scan over every kind ranks like the KNN.
+        check("crowding: filtered vector scan ranks like the KNN",
+              ks.vector_rank(root, CROWD_QUERY, kinds=["kb", "docs"]) == ks.vector_rank(root, CROWD_QUERY))
+
+
 if __name__ == "__main__":
     if not shutil.which("git"):
         print("git not on PATH — cannot build the fixture")
@@ -716,6 +774,7 @@ if __name__ == "__main__":
         test_prewarm_hook(repo, wt)
         test_prompt_hook_scope(repo, wt)
         test_index(repo, wt)
+        test_kind_crowding(base)
     if FAILURES:
         print(f"\n{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
         sys.exit(1)
