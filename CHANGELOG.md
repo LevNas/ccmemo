@@ -17,9 +17,15 @@ All notable changes to this project will be documented in this file.
   every chunk. Without `--kind` the ranking is unchanged. On one real index,
   a query that gave 0 `kb` hits now gives 5, and three queries without
   `--kind` return the same list as before.
-- Run with a plain `python3` that lacks fastembed or sqlite-vec, the CLI now
-  says to use `uv run` and exits 2, instead of a `ModuleNotFoundError`
-  traceback (or, on a root with no index, an empty result).
+- An empty `kind` (an index from before schema 5, read-only from a linked
+  worktree, is never backfilled) counts as `kb` in the vector arm too, as it
+  already did in the stored metadata.
+- Run with a plain `python3` that lacks fastembed or sqlite-vec, the CLI died
+  with a `ModuleNotFoundError` traceback as soon as an index existed (only
+  `--no-lazy` on a root without an index got through). It now runs the
+  ripgrep-only fallback the recall skill describes: it never opens the
+  index, ranks by the lexical arm alone (`--kind` still applies, from the
+  path rules), and says on stderr that `uv run` gives the hybrid search.
 
 ## [1.30.4] - 2026-10-03
 

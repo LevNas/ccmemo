@@ -759,6 +759,14 @@ def test_kind_crowding(base):
         # Same metric: the filtered scan over every kind ranks like the KNN.
         check("crowding: filtered vector scan ranks like the KNN",
               ks.vector_rank(root, CROWD_QUERY, kinds=["kb", "docs"]) == ks.vector_rank(root, CROWD_QUERY))
+        # An index from before schema 5 has kind '' (never backfilled when read
+        # from a worktree): the vector arm reads it as kb, like _entry_meta.
+        conn = kbi.connect(kbi.index_db_path(root))
+        conn.execute("UPDATE entries SET kind = '' WHERE relpath = ?", (CROWD_KB,))
+        conn.commit()
+        conn.close()
+        check("crowding: empty kind counts as kb in the vector arm",
+              CROWD_KB in ks.vector_rank(root, CROWD_QUERY, kinds=["kb"]))
 
 
 if __name__ == "__main__":

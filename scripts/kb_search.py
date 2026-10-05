@@ -46,7 +46,7 @@ fill the candidate set and leave nothing of the requested kind (issue #69).
 Usage
 -----
     uv run scripts/kb_search.py ROOT "クエリ" [filters...]
-    python3 scripts/kb_search.py ROOT "クエリ" [filters...]   # only with fastembed + sqlite-vec installed
+    python3 scripts/kb_search.py ROOT "クエリ" [filters...]   # without fastembed + sqlite-vec: ripgrep only
 
       ROOT                 knowledge entries dir (same arg as kb_index.py)
       --status active      only entries with this status
@@ -238,6 +238,8 @@ def vector_rank(root: Path, query: str, k: int = 40, kinds=None) -> list[str]:
     by kind, and over-fetching does not reach far enough (k is capped at 4096,
     an index can hold more chunks). vec0 computes every distance anyway, so a
     filtered scan with the same metric (L2, vec0's default) costs about the same.
+    An empty kind (an index from before schema 5, read-only from a worktree,
+    is never backfilled) counts as `kb`, as `_entry_meta` reads it.
     """
     conn = kbi.open_index(root)
     if conn is None:
@@ -251,7 +253,7 @@ def vector_rank(root: Path, query: str, k: int = 40, kinds=None) -> list[str]:
             FROM vec_chunks v
             JOIN chunks c ON c.rowid = v.chunk_rowid
             JOIN entries e ON e.relpath = c.relpath
-            WHERE e.kind IN ({", ".join("?" * len(kinds))})
+            WHERE COALESCE(NULLIF(e.kind, ''), 'kb') IN ({", ".join("?" * len(kinds))})
             ORDER BY distance
             LIMIT ?
             """,
@@ -482,10 +484,14 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
            status, tags, etype, created_from, created_to,
            max_edges: int = DEFAULT_EDGES,
            max_linked_from: int = DEFAULT_LINKED_FROM,
-           verified_min: str = "", kinds=None) -> list[dict]:
+           verified_min: str = "", kinds=None, use_index: bool = True) -> list[dict]:
+    """`use_index=False` is the ripgrep-only fallback for a Python without
+    fastembed / sqlite-vec: the index is never opened (opening it loads
+    sqlite-vec), so there is no refresh, no vector arm, no `see:` expansion and
+    no stored metadata. Kinds come from the path rules instead."""
     ctx = kbi.context(root)
     base = ctx.key_base
-    if lazy:
+    if lazy and use_index:
         if ctx.shared:
             # A linked worktree reads the main checkout's index and never
             # writes it: say how far behind it is instead of refreshing.
@@ -504,14 +510,16 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
                 kbi.ensure_metadata(root)
 
     lex = lexical_rank(root, query, use_mecab, ctx, kinds=kinds)
-    vec = vector_rank(root, query, kinds=kinds)
+    vec = vector_rank(root, query, kinds=kinds) if use_index else []
     fused = rrf_fuse(lex, vec)
 
-    # Expand see: from the current top before filtering.
-    pre_top = [r for r, _ in sorted(fused.items(), key=lambda kv: -kv[1])][: top * 2]
-    expand_see_one_hop(root, pre_top, fused)
-
-    meta = _entry_meta(root)
+    if use_index:
+        # Expand see: from the current top before filtering.
+        pre_top = [r for r, _ in sorted(fused.items(), key=lambda kv: -kv[1])][: top * 2]
+        expand_see_one_hop(root, pre_top, fused)
+        meta = _entry_meta(root)
+    else:
+        meta = {rel: {"kind": ctx.kind_of(base / rel)} for rel in fused}
     # Folding: same id or same content -> one line, every location listed.
     # Folded twins must be equivalent under the filters, so filter first.
     results = []
@@ -566,7 +574,7 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
     edge_info = entry_edges(
         root, [r["relpath"] for r in results], meta,
         max_out=max_edges, max_in=max_linked_from,
-    )
+    ) if use_index else {}
     for r in results:
         r.update(edge_info.get(r["relpath"], {
             "edges": [], "edges_total": 0, "linked_from": [], "linked_from_total": 0,
@@ -722,14 +730,17 @@ def main(argv: list[str]) -> int:
     if not root.is_dir():
         print(f"error: not a directory: {root}", file=sys.stderr)
         return 2
+    use_index = True
     try:
         import fastembed  # noqa: F401
         import sqlite_vec  # noqa: F401
     except ImportError as e:
-        print(f"error: {e.name} is not installed. Run this script with `uv run`, which "
-              "installs the dependencies declared at its top (recall-knowledge, Step 3a).",
+        # Fall back to ripgrep only rather than dying in the index code.
+        use_index = False
+        print(f"ccmemo search: {e.name} is not installed, so this is a ripgrep-only "
+              "search (no vector arm, no index refresh, no stored titles or edges). "
+              "Run with `uv run` for the hybrid search (recall-knowledge, Step 3a).",
               file=sys.stderr)
-        return 2
 
     results = search(
         root, args.query,
@@ -745,6 +756,7 @@ def main(argv: list[str]) -> int:
         max_linked_from=args.linked_from,
         verified_min=args.verified_min,
         kinds=args.kinds or None,
+        use_index=use_index,
     )
 
     if args.json:
