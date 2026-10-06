@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.31.0] - 2026-10-06
+
+### Added
+- Lint check `yaml-unsafe-value` (schema 4): an unquoted frontmatter value
+  that a strict YAML reader rejects or reads differently (#68). ccmemo's
+  parser splits a key at the first `:` and treats `#` as a comment only when
+  whitespace follows, so it reads `title: ADR: x` and `title: issue #12 fix`
+  as written, and the lint, which uses the same parser, never saw a problem.
+  Other readers of the same files reject the first frontmatter outright and
+  read the second title as `issue`. The check flags a value that contains
+  `: ` or ends with `:`, contains ` #`, or starts with a character that
+  cannot start an unquoted value. It is advisory until a knowledge base
+  declares `schema_version: 4` (see docs/upgrading.md); the scaffolded
+  knowledge-base `CLAUDE.md` now declares 4. On one real knowledge base it
+  listed 6 of about 320 entries, the same 6 that PyYAML rejects or reads
+  differently. Parsing itself is unchanged.
+
+### Changed
+- The `/record-knowledge` template quotes `title:`, and the note that titles
+  may contain `: ` unquoted is replaced by advice to quote `title:` and
+  `description:`.
+
 ## [1.30.5] - 2026-10-06
 
 ### Fixed

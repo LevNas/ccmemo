@@ -64,7 +64,7 @@ cp assets/knowledge-CLAUDE.md .claude/knowledge/CLAUDE.md
 ## Entry Format (YAML Frontmatter)
 ```markdown
 ---
-title: <title>
+title: "<title>"
 id: <uuid4>
 author: "@<username>"
 created: YYYY-MM-DD
@@ -94,7 +94,9 @@ description: "<trigger condition — WHEN to open this entry, not what it says>"
 - `status:` may be omitted; readers treat a missing or blank status as `active`
 - `verified:` (a list of `{by, at}` events) is appended by `kb_graph.py verify`, never by
   hand. `confidence:` is retired: still parsed, used by nothing, not written for new entries
-- Titles may contain `: ` unquoted; the parser keeps the whole remainder as the title
+- Quote `title:` and `description:` with `"` (inside, write `"` as `\"` and `\` as `\\`). ccmemo's own parser
+  would read `ADR: x` or `issue #12` unquoted, but other YAML readers reject the frontmatter or
+  cut the value at ` #`; the lint reports such values as `yaml-unsafe-value`
 
 - Keep entries focused and under **100 KB** where possible
 - When creating an entry that exceeds **300 lines**, consider splitting it

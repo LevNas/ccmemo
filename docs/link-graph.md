@@ -184,6 +184,7 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 | `missing-id` / `duplicate-id` | no `id:` (uuid4), or the same `id` in two entries of this corpus (the same `id` in *another* corpus is a mirror, not a finding) |
 | `missing-generated` | no `generated:` — or not a `{by, at}` mapping with an ISO 8601 `at` |
 | `invalid-actor` | `generated.by` or a `verified[].by` is not `human:<handle>`, `claude-code[/<model-id>]` or `process:<name>` |
+| `yaml-unsafe-value` | an unquoted frontmatter value that a strict YAML reader rejects or reads differently: it contains `: ` or ends with `:` (the whole frontmatter is rejected), contains ` #` (the rest is read as a comment), or starts with a character such as `` ` ``, `#`, `&`, `[` that cannot start an unquoted value. ccmemo's own parser reads these, but other tools (PyYAML, editors, site generators) do not. Quote the value |
 | `verification-expired` | the latest `verified.at` is older than `generated.at`: the body was rewritten since it was checked (informational) |
 | `stale-after-passed` | `stale_after:` is behind today (informational) |
 | `duplicate-title` | two entries share a title — hard to tell apart in search results (informational) |
@@ -193,7 +194,8 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 declares the schema that introduced them in the frontmatter of
 `<root>/../CLAUDE.md` (the scaffolded `CLAUDE.md` declares the latest):
 `missing-description` … `extends-unreciprocated` from `schema_version: 2`,
-`missing-id` … `invalid-actor` from `schema_version: 3`. On a corpus that
+`missing-id` … `invalid-actor` from `schema_version: 3`, `yaml-unsafe-value`
+from `schema_version: 4`. On a corpus that
 declares less they are still listed, under an *advisory* heading, but do not
 affect the exit code — so updating the plugin never turns a pre-commit lint
 red before the corpus is migrated. The three *informational* rows are

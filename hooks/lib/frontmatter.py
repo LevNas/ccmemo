@@ -235,6 +235,77 @@ def _parse_sequence(lines, i, indent):
     return out, i
 
 
+# --------------------------------------------------------------------------- #
+# Values a strict YAML reader treats differently
+# --------------------------------------------------------------------------- #
+
+# Characters that cannot start an unquoted (plain) YAML value. "-", "?" and
+# ":" are listed separately: they are fine when a non-space follows.
+_PLAIN_FIRST_BAD = set("`&*!|>%@#,]}")
+_COLON_RE = re.compile(r":(?:\s|$)")
+_SPACE_HASH_RE = re.compile(r"\s#")
+
+
+def _plain_hazard(raw: str) -> str | None:
+    """Why a strict YAML reader would not read ``raw`` as this parser does."""
+    s = raw.strip()
+    if not s or s[0] in "\"'":
+        return None
+    if s[0] in "[{":
+        closed = s.endswith("]" if s[0] == "[" else "}")
+        return None if closed else f'starts with "{s[0]}" but is not a flow collection'
+    s = _strip_comment(s)
+    if not s:
+        return None
+    if s[0] in _PLAIN_FIRST_BAD or (s[0] in "-?:" and (len(s) == 1 or s[1].isspace())):
+        return f'starts with "{s[0]}", which cannot start an unquoted YAML value'
+    if _COLON_RE.search(s):
+        return 'contains ": " or ends with ":", so strict YAML rejects the whole frontmatter'
+    if _SPACE_HASH_RE.search(s):
+        return 'contains " #", where strict YAML starts a comment and cuts the value'
+    return None
+
+
+def yaml_hazards(block: str) -> list[tuple[str, str]]:
+    """Unquoted values that a strict YAML reader rejects or reads differently.
+
+    This parser is more lenient than YAML: it splits a key at the first ``:``
+    and only treats ``#`` as a comment when whitespace follows. Other readers
+    of the same files (PyYAML, editors, static site generators) are not, so
+    ``title: ADR: x`` makes them reject the whole frontmatter and
+    ``title: issue #12 fix`` gives them ``issue``. Returns ``(key path, reason)``
+    pairs, e.g. ``("title", ...)`` or ``("verified.by", ...)``; parsing itself
+    is unchanged.
+    """
+    out: list[tuple[str, str]] = []
+    stack: list[tuple[int, str]] = []  # enclosing keys: (indent, key)
+    for indent, content in _lines(block):
+        if _is_item(content):
+            while stack and stack[-1][0] > indent:
+                stack.pop()
+            value = content[1:].strip()
+            path = [k for _, k in stack]
+            km = _KEY_RE.match(value)
+            if km and value[0] not in "\"'[{":
+                path.append(km.group(1))
+                value = km.group(2) or ""
+        else:
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            m = _KEY_RE.match(content)
+            if not m:
+                continue
+            path = [k for _, k in stack] + [m.group(1)]
+            value = m.group(2) or ""
+            if not value.strip():
+                stack.append((indent, m.group(1)))
+                continue
+        reason = _plain_hazard(value)
+        if reason:
+            out.append((".".join(path) or "-", reason))
+    return out
+
+
 def parse_block(block: str) -> dict[str, Any]:
     """Parse a frontmatter block (delimiters already removed) into a dict."""
     lines = _lines(block)

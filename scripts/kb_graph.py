@@ -120,11 +120,12 @@ DESCRIPTION_MAX_CHARS = 320
 # (`schema_version: 2`); checks introduced by a later schema are still
 # reported on an older corpus, but as *advisory* findings that do not affect
 # the exit code, until the declaration is raised (see docs/upgrading.md).
-SCHEMA_VERSION_LATEST = 3
+SCHEMA_VERSION_LATEST = 4
 SCHEMA_CHECKS = {
     2: {"missing-description", "description-length", "unlabeled-link",
         "amends-unreciprocated", "extends-unreciprocated"},
     3: {"missing-id", "duplicate-id", "missing-generated", "invalid-actor"},
+    4: {"yaml-unsafe-value"},
 }
 # Informational at every schema: they describe the state of the knowledge,
 # not a broken convention, so they never fail a pre-commit lint.
@@ -233,6 +234,11 @@ def load_graph(root):
                 problems.append((nid, "stale-after-passed",
                                  f"stale_after {meta.get('stale_after')} has passed — re-check, "
                                  "then move the date or deprecate"))
+            # Schema 4: the shared parser is more lenient than YAML, so check
+            # what other readers of the same file would refuse or misread.
+            block = _frontmatter.split(text)[0]
+            for key, reason in _frontmatter.yaml_hazards(block or ""):
+                problems.append((nid, "yaml-unsafe-value", f"{key}: {reason} — quote the value"))
             if not meta.get("title"):
                 problems.append((nid, "missing-title", "no frontmatter title"))
             desc = " ".join(meta.get("description", "").split())

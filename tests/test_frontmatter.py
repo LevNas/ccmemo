@@ -199,6 +199,53 @@ def test_cross_check_with_pyyaml_when_available():
         assert norm(ours) == norm(ref), (norm(ours), norm(ref))
 
 
+# Unquoted values: (value, a strict YAML reader rejects it or reads it differently).
+HAZARD_CASES = [
+    ("ADR: colon inside", True), ("ends with colon:", True), ("issue #12 fix", True),
+    ("`code` first", True), ("#a #b", True), ("&anchor", True), ("!tag", True),
+    ("| block", True), ("@at", True), ("- dash space", True), ("[WIP] title", True),
+    ("x  # real comment", False), ("plain words", False), ("https://example.com/a", False),
+    ("human:x", False), ("2026/09/x.md", False), ("-dash", False), ("C# notes", False),
+    ("a#b c", False), ("100% done", False), ("[a, b]", False), ("{k: v}", False),
+    ('"quoted: ok #1"', False), ("'single # ok'", False),
+]
+
+
+def test_yaml_hazards_flags_only_values_strict_yaml_misreads():
+    for value, hazard in HAZARD_CASES:
+        found = fm.yaml_hazards(f"title: {value}\n")
+        assert bool(found) == hazard, (value, found)
+        if hazard:
+            assert found[0][0] == "title", found
+    # nested keys and list items get a dotted path; the safe fixtures are clean
+    block = ("tags:\n  - \"#a\"\n  - #b\n"
+             "verified:\n  - by: human:x\n    at: 2026-09-24T10:00:00Z\n  - by: a: b\n"
+             "generated:\n  by: claude-code\n  at: issue #3\n")
+    assert [k for k, _ in fm.yaml_hazards(block)] == ["tags", "verified.by", "generated.at"], \
+        fm.yaml_hazards(block)
+    for text in (STRICT_STRING_TAGS, LIST_TAGS, NESTED):
+        assert fm.yaml_hazards(fm.split(text)[0]) == [], text
+    assert [k for k, _ in fm.yaml_hazards(fm.split(STRING_TAGS)[0])] == ["title"]
+    # the lenient reading itself is unchanged
+    assert fm.parse("---\ntitle: issue #12 fix\n---\n")[0]["title"] == "issue #12 fix"
+
+
+def test_yaml_hazards_agree_with_pyyaml_when_available():
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        print("  (skip: PyYAML not installed — cross-check not run)")
+        return
+    for value, hazard in HAZARD_CASES:
+        block = f"title: {value}\n"
+        try:
+            ref = yaml.safe_load(block)
+            same = isinstance(ref, dict) and (ref.get("title") or "") == fm.parse_block(block)["title"]
+        except yaml.YAMLError:
+            same = False
+        assert same != hazard, (value, hazard)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

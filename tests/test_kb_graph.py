@@ -994,8 +994,43 @@ def test_schema3_lint_checks_and_severities():
         assert res.returncode == 0, res.stdout
         assert {f["severity"] for f in json.loads(res.stdout)} == {"advisory"}
         res = run_cli(root, "--schema", "2", "lint")
-        assert "enforced at a later schema_version (latest: 3)" in res.stdout, res.stdout
+        assert "enforced at a later schema_version (latest: 4)" in res.stdout, res.stdout
         assert "informational at every schema_version" in res.stdout, res.stdout
+
+
+def test_schema4_yaml_unsafe_value_gate():
+    with tempfile.TemporaryDirectory() as base:
+        root = os.path.join(base, "repo", ".claude", "knowledge", "entries", "2026", "07")
+        os.makedirs(root)
+        root = os.path.dirname(os.path.dirname(root))
+        rest = ("generated:\n  by: human:alice\n  at: 2026-07-01T10:00:00+09:00\n"
+                'description: "Open when the schema-4 lint fixture needs a trigger condition long enough to pass."\n')
+        entries = {
+            "2026/07/20260701-100000-alice-colon.md":
+                "---\ntitle: ADR: colon inside\nid: 11111111-1111-4111-8111-111111111111\n" + rest,
+            "2026/07/20260701-100001-alice-hash.md":
+                "---\ntitle: issue #12 fix\nid: 22222222-2222-4222-8222-222222222222\n" + rest,
+            "2026/07/20260701-100002-alice-quoted.md":
+                '---\ntitle: "ADR: quoted, issue #12"\nid: 33333333-3333-4333-8333-333333333333\n' + rest,
+        }
+        for rel, text in entries.items():
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as f:
+                f.write(text + "---\n\nx\n")
+        with open(os.path.join(root, "..", "CLAUDE.md"), "w", encoding="utf-8") as f:
+            f.write("---\nschema_version: 3\n---\n# KB\n")
+        # declared schema 3: listed, advisory, exit 0
+        res = run_cli(root, "--json", "lint")
+        assert res.returncode == 0, (res.stdout, res.stderr)
+        found = {(os.path.basename(f["id"])[22:], f["check"], f["severity"]) for f in json.loads(res.stdout)}
+        assert found == {("colon.md", "yaml-unsafe-value", "advisory"),
+                         ("hash.md", "yaml-unsafe-value", "advisory")}, found
+        # schema 4: enforced
+        res = run_cli(root, "--json", "--schema", "4", "lint")
+        assert res.returncode == 1, (res.stdout, res.stderr)
+        details = {os.path.basename(f["id"])[22:]: f["detail"] for f in json.loads(res.stdout)}
+        assert details["colon.md"].startswith('title: contains ": "'), details
+        assert details["hash.md"].startswith('title: contains " #"'), details
+        assert "quoted.md" not in details, details
 
 
 def main() -> int:
