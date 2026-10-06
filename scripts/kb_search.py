@@ -39,12 +39,14 @@ covers every document in the repository, each with a `kind` (`kb` for the
 knowledge base, `docs` for the rest, or what the repository's `corpora`
 rules declare). Every hit carries a `[kind]` badge; `--kind` filters. Hits
 with identical content (same sha256) or the same entry `id` are folded into
-one line that lists every location. Ranking never weights by kind.
+one line that lists every location. Ranking never weights by kind. `--kind`
+narrows both arms before ranking, so a larger corpus of another kind cannot
+fill the candidate set and leave nothing of the requested kind (issue #69).
 
 Usage
 -----
     uv run scripts/kb_search.py ROOT "クエリ" [filters...]
-    python3 scripts/kb_search.py ROOT "クエリ" [filters...]
+    python3 scripts/kb_search.py ROOT "クエリ" [filters...]   # without fastembed + sqlite-vec: ripgrep only
 
       ROOT                 knowledge entries dir (same arg as kb_index.py)
       --status active      only entries with this status
@@ -149,7 +151,7 @@ def _ascii_terms(query: str, min_len: int = 2) -> list[str]:
 
 
 def lexical_rank(root: Path, query: str, use_mecab: bool,
-                 ctx: "kbi.RootContext | None" = None) -> list[str]:
+                 ctx: "kbi.RootContext | None" = None, kinds=None) -> list[str]:
     """Return entry relpaths ranked by lexical relevance (best first).
 
     Scoring mirrors the existing hook: each matching term contributes 1/hit_count
@@ -160,12 +162,15 @@ def lexical_rank(root: Path, query: str, use_mecab: bool,
     root in `scope: repo`) and only files in the index's candidate set count,
     so an excluded capture or an ignored file never leaks into the ranking.
     Files over the embedding size cap are still found here: rg reads them.
+    `kinds` narrows that set too, so the hit count of a term is taken within
+    the requested kinds and another corpus cannot push it over the limit.
     """
     if not shutil.which("rg"):
         return []
     ctx = ctx or kbi.context(root)
     base = ctx.key_base
-    allowed = {key for _p, key in kbi.candidate_files(root, ctx)}
+    allowed = {key for p, key in kbi.candidate_files(root, ctx)
+               if not kinds or ctx.kind_of(p) in kinds}
     rg_opts: list[str] = []
     if ctx.scope == "repo":
         # The knowledge base lives under a dotdir; rg skips hidden paths by
@@ -225,22 +230,46 @@ def lexical_rank(root: Path, query: str, use_mecab: bool,
 # Vector arm (sqlite-vec KNN)
 # --------------------------------------------------------------------------- #
 
-def vector_rank(root: Path, query: str, k: int = 40) -> list[str]:
-    """Return entry relpaths ranked by best (closest) chunk distance, best first."""
+def vector_rank(root: Path, query: str, k: int = 40, kinds=None) -> list[str]:
+    """Return entry relpaths ranked by best (closest) chunk distance, best first.
+
+    Without `kinds` this is sqlite-vec's KNN over every chunk. With `kinds`
+    the k nearest chunks are taken among those kinds only: KNN cannot filter
+    by kind, and over-fetching does not reach far enough (k is capped at 4096,
+    an index can hold more chunks). vec0 computes every distance anyway, so a
+    filtered scan with the same metric (L2, vec0's default) costs about the same.
+    An empty kind (an index from before schema 5, read-only from a worktree,
+    is never backfilled) counts as `kb`, as `_entry_meta` reads it.
+    """
     conn = kbi.open_index(root)
     if conn is None:
         return []
-    qvec = kbi.embed_query(query)
-    rows = conn.execute(
-        """
-        SELECT c.relpath, v.distance
-        FROM vec_chunks v
-        JOIN chunks c ON c.rowid = v.chunk_rowid
-        WHERE v.embedding MATCH ? AND k = ?
-        ORDER BY v.distance
-        """,
-        (kbi.serialize_f32(qvec), k),
-    ).fetchall()
+    qvec = kbi.serialize_f32(kbi.embed_query(query))
+    if kinds:
+        kinds = sorted(set(kinds))
+        rows = conn.execute(
+            f"""
+            SELECT c.relpath, vec_distance_L2(v.embedding, ?) AS distance
+            FROM vec_chunks v
+            JOIN chunks c ON c.rowid = v.chunk_rowid
+            JOIN entries e ON e.relpath = c.relpath
+            WHERE COALESCE(NULLIF(e.kind, ''), 'kb') IN ({", ".join("?" * len(kinds))})
+            ORDER BY distance
+            LIMIT ?
+            """,
+            (qvec, *kinds, k),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT c.relpath, v.distance
+            FROM vec_chunks v
+            JOIN chunks c ON c.rowid = v.chunk_rowid
+            WHERE v.embedding MATCH ? AND k = ?
+            ORDER BY v.distance
+            """,
+            (qvec, k),
+        ).fetchall()
     conn.close()
     # Keep the best (smallest) distance per entry, preserve ascending order.
     best: dict[str, float] = {}
@@ -455,10 +484,14 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
            status, tags, etype, created_from, created_to,
            max_edges: int = DEFAULT_EDGES,
            max_linked_from: int = DEFAULT_LINKED_FROM,
-           verified_min: str = "", kinds=None) -> list[dict]:
+           verified_min: str = "", kinds=None, use_index: bool = True) -> list[dict]:
+    """`use_index=False` is the ripgrep-only fallback for a Python without
+    fastembed / sqlite-vec: the index is never opened (opening it loads
+    sqlite-vec), so there is no refresh, no vector arm, no `see:` expansion and
+    no stored metadata. Kinds come from the path rules instead."""
     ctx = kbi.context(root)
     base = ctx.key_base
-    if lazy:
+    if lazy and use_index:
         if ctx.shared:
             # A linked worktree reads the main checkout's index and never
             # writes it: say how far behind it is instead of refreshing.
@@ -476,15 +509,17 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
                 # derived columns from the Markdown (no re-embedding).
                 kbi.ensure_metadata(root)
 
-    lex = lexical_rank(root, query, use_mecab, ctx)
-    vec = vector_rank(root, query)
+    lex = lexical_rank(root, query, use_mecab, ctx, kinds=kinds)
+    vec = vector_rank(root, query, kinds=kinds) if use_index else []
     fused = rrf_fuse(lex, vec)
 
-    # Expand see: from the current top before filtering.
-    pre_top = [r for r, _ in sorted(fused.items(), key=lambda kv: -kv[1])][: top * 2]
-    expand_see_one_hop(root, pre_top, fused)
-
-    meta = _entry_meta(root)
+    if use_index:
+        # Expand see: from the current top before filtering.
+        pre_top = [r for r, _ in sorted(fused.items(), key=lambda kv: -kv[1])][: top * 2]
+        expand_see_one_hop(root, pre_top, fused)
+        meta = _entry_meta(root)
+    else:
+        meta = {rel: {"kind": ctx.kind_of(base / rel)} for rel in fused}
     # Folding: same id or same content -> one line, every location listed.
     # Folded twins must be equivalent under the filters, so filter first.
     results = []
@@ -539,7 +574,7 @@ def search(root: Path, query: str, *, top: int, use_mecab: bool, lazy: bool,
     edge_info = entry_edges(
         root, [r["relpath"] for r in results], meta,
         max_out=max_edges, max_in=max_linked_from,
-    )
+    ) if use_index else {}
     for r in results:
         r.update(edge_info.get(r["relpath"], {
             "edges": [], "edges_total": 0, "linked_from": [], "linked_from_total": 0,
@@ -695,6 +730,27 @@ def main(argv: list[str]) -> int:
     if not root.is_dir():
         print(f"error: not a directory: {root}", file=sys.stderr)
         return 2
+    use_index = True
+    try:
+        import fastembed  # noqa: F401
+        import sqlite_vec  # noqa: F401
+    except ImportError as e:
+        # Fall back to ripgrep only rather than dying in the index code.
+        use_index = False
+        print(f"ccmemo search: {e.name} is not installed, so this is a ripgrep-only "
+              "search (no vector arm, no index refresh, no stored titles or edges). "
+              "Run with `uv run` for the hybrid search (recall-knowledge, Step 3a).",
+              file=sys.stderr)
+        needs_meta = [flag for flag, value in (
+            ("--status", args.status), ("--tag", args.tags), ("--type", args.etype),
+            ("--created-from", args.created_from), ("--created-to", args.created_to),
+            ("--verified", args.verified_min)) if value]
+        if needs_meta:
+            # These read the stored metadata, which the fallback does not open:
+            # every hit fails them. Say so rather than show a bare "no hits".
+            print(f"ccmemo search: {', '.join(needs_meta)} need the index's stored "
+                  "metadata, so every hit is dropped in the ripgrep-only search.",
+                  file=sys.stderr)
 
     results = search(
         root, args.query,
@@ -710,6 +766,7 @@ def main(argv: list[str]) -> int:
         max_linked_from=args.linked_from,
         verified_min=args.verified_min,
         kinds=args.kinds or None,
+        use_index=use_index,
     )
 
     if args.json:

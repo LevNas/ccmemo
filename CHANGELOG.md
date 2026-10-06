@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.30.5] - 2026-10-06
+
+### Fixed
+- `kb_search.py --kind` could return nothing although entries of that kind
+  matched the query (#69). The filter ran after the candidates were taken
+  from the whole index, so a larger corpus of another kind on the same theme
+  filled the vector arm's 40 slots and pushed every query term over the
+  lexical arm's 50-file limit. `--kind` now narrows both arms first: the
+  lexical arm counts hits within the requested kinds, and the vector arm
+  ranks only chunks of those kinds by `vec_distance_L2` (vec0's own metric).
+  The issue proposed over-fetching with a larger `k` instead; sqlite-vec caps
+  `k` at 4096, below the chunk count of a real index, so it could not reach
+  every chunk. Without `--kind` the ranking is unchanged. On one real index,
+  a query that gave 0 `kb` hits now gives 5, and three queries without
+  `--kind` return the same list as before.
+- An empty `kind` (an index from before schema 5, read-only from a linked
+  worktree, is never backfilled) counts as `kb` in the vector arm too, as it
+  already did in the stored metadata.
+- Run with a plain `python3` that lacks fastembed or sqlite-vec, the CLI died
+  with a `ModuleNotFoundError` traceback as soon as an index existed (only
+  `--no-lazy` on a root without an index got through). It now runs the
+  ripgrep-only fallback the recall skill describes: it never opens the
+  index, ranks by the lexical arm alone (`--kind` still applies, from the
+  path rules), and says on stderr that `uv run` gives the hybrid search.
+  Filters that read stored metadata (`--status`, `--tag`, `--type`,
+  `--created-from`, `--created-to`, `--verified`) drop every hit there; the
+  CLI says so when one is given, instead of a bare "no hits".
+
 ## [1.30.4] - 2026-10-03
 
 ### Fixed

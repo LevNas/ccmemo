@@ -297,12 +297,69 @@ def test_schema_upgrade():
         conn.close()
 
 
+def test_missing_dependencies():
+    """Under a plain python3 without fastembed / sqlite-vec, the CLI falls back
+    to ripgrep only and says so, instead of dying in the index code (issue #69).
+    Stand-in packages that raise ImportError make the check the same with or
+    without the deps. An index file is present: opening it would load
+    sqlite-vec, so the fallback must not open it."""
+    import shutil
+    import subprocess
+    if not shutil.which("rg"):
+        print("skip missing-dependency test (rg not on PATH)")
+        return
+    with tempfile.TemporaryDirectory() as d:
+        for mod in ("fastembed", "sqlite_vec"):
+            os.makedirs(os.path.join(d, "shadow", mod))
+            with open(os.path.join(d, "shadow", mod, "__init__.py"), "w") as f:
+                f.write(f"raise ImportError('blocked for the test', name={mod!r})\n")
+        root = Path(d) / "knowledge" / "entries"
+        (root / "2026" / "09").mkdir(parents=True)
+        (root / A).write_text("---\ntitle: Walrus\nstatus: active\n---\n\n# Walrus\n\n"
+                              "Reconcile the walrus ledger.\n", encoding="utf-8")
+        env = dict(os.environ, PYTHONPATH=os.path.join(d, "shadow"))
+        env.pop("CCMEMO_KB_INDEX", None)
+        saved = os.environ.pop("CCMEMO_KB_INDEX", None)
+        try:
+            db = kbi.context(root).db_path
+        finally:
+            if saved is not None:
+                os.environ["CCMEMO_KB_INDEX"] = saved
+        db.parent.mkdir(parents=True, exist_ok=True)
+        db.write_bytes(b"")
+        for extra in ([], ["--kind", "kb"]):
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "kb_search.py"),
+                                str(root), "walrus ledger", "--json", *extra],
+                               capture_output=True, text=True, env=env, timeout=60)
+            name = "missing deps" + (" --kind kb" if extra else "")
+            check(f"{name}: exit 0, no traceback", r.returncode == 0 and "Traceback" not in r.stderr,
+                  (r.returncode, r.stderr[-300:]))
+            check(f"{name}: says ripgrep-only, points to uv run",
+                  "ripgrep-only" in r.stderr and "uv run" in r.stderr, r.stderr[-300:])
+            try:
+                hits = [h["relpath"] for h in json.loads(r.stdout)]
+            except ValueError:
+                hits = r.stdout[-300:]
+            check(f"{name}: lexical hit returned", hits == [A], hits)
+            check(f"{name}: no metadata-filter warning without such a filter",
+                  "stored metadata" not in r.stderr, r.stderr[-300:])
+        # Frontmatter filters read stored metadata the fallback never opens:
+        # every hit is dropped, and the CLI says why.
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "kb_search.py"),
+                            str(root), "walrus ledger", "--json", "--status", "active"],
+                           capture_output=True, text=True, env=env, timeout=60)
+        check("missing deps --status: warns that the filter needs the index",
+              r.returncode == 0 and "--status need the index's stored metadata" in r.stderr,
+              (r.returncode, r.stderr[-300:]))
+
+
 if __name__ == "__main__":
     test_parse_entry()
     test_handles()
     test_trust_fields()
     test_entry_id_and_format()
     test_schema_upgrade()
+    test_missing_dependencies()
     if FAILURES:
         print(f"\n{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
         sys.exit(1)
