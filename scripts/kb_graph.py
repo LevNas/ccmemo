@@ -236,8 +236,15 @@ def load_graph(root):
                                  "then move the date or deprecate"))
             # Schema 4: the shared parser is more lenient than YAML, so check
             # what other readers of the same file would refuse or misread.
+            # load_graph serves every subcommand, so a fault in this check
+            # becomes a finding instead of stopping them.
             block = _frontmatter.split(text)[0]
-            for key, reason in _frontmatter.yaml_hazards(block or ""):
+            try:
+                hazards = _frontmatter.yaml_hazards(block or "")
+            except Exception as exc:  # noqa: BLE001
+                hazards = [("-", f"could not be checked ({type(exc).__name__}: {exc}) — "
+                                 "please report this as a ccmemo bug")]
+            for key, reason in hazards:
                 problems.append((nid, "yaml-unsafe-value", f"{key}: {reason}"))
             if not meta.get("title"):
                 problems.append((nid, "missing-title", "no frontmatter title"))

@@ -15,12 +15,15 @@ All notable changes to this project will be documented in this file.
   contains `: ` or ends with `:`, contains ` #`, or starts with a character
   YAML reads as syntax, or is only a comment; a `"` or `\` inside double
   quotes not written as `\"` or `\\`, or a `'` inside single quotes not
-  doubled; a comment after a closing quote or a flow collection, a flow
-  collection not closed on its line, and an item inside `[...]`/`{...}` in
-  any of these forms or with a quote character inside; a `|`/`>` block,
-  which the parser reads as the indicator alone; and a plain value wrapped
-  onto a deeper line, which the parser drops along with the keys after it.
-  Each finding names its fix. YAML's typed scalars (`yes`, `null`, numbers)
+  doubled; a comment after a closing quote, a comment or other text after a
+  flow collection, a flow collection not closed on its line or with a nested
+  collection containing commas, and an item inside `[...]`/`{...}` in any of
+  these forms or with a quote character inside; a `|`/`>` block, which the
+  parser reads as the indicator alone; a one-line value wrapped onto a
+  deeper line, which the parser drops along with the keys after it; and a
+  line that is neither a key nor a list item, which the parser skips. Each
+  finding names its fix. A fault in the check itself is reported as a
+  finding, so it cannot stop the other `kb_graph.py` commands. YAML's typed scalars (`yes`, `null`, numbers)
   are out of scope. It is advisory until a knowledge base declares
   `schema_version: 4` (see docs/upgrading.md). On one real knowledge base of
   about 320 entries it listed 6, the same 6 that PyYAML rejected or read

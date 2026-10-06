@@ -1032,6 +1032,28 @@ def test_schema4_yaml_unsafe_value_gate():
         assert details["hash.md"].startswith('title: contains " #"'), details
         assert "quoted.md" not in details, details
 
+        # a "-" item with its content on deeper lines is valid and must not stop lint
+        with open(os.path.join(root, "2026/07/20260701-100003-alice-dash.md"), "w",
+                  encoding="utf-8") as f:
+            f.write('---\ntitle: "Dash item"\nid: 44444444-4444-4444-8444-444444444444\n' + rest
+                    + "links:\n  -\n    a: b\n---\n\nx\n")
+        res = run_cli(root, "--json", "--schema", "4", "lint")
+        assert "Traceback" not in res.stderr, res.stderr
+        assert "dash.md" not in {os.path.basename(f["id"])[22:] for f in json.loads(res.stdout)}
+
+        # a fault in the check becomes a finding; load_graph (every subcommand) goes on
+        original = kb_graph._frontmatter.yaml_hazards
+
+        def broken(_block):
+            raise IndexError("boom")
+        kb_graph._frontmatter.yaml_hazards = broken
+        try:
+            _nodes, _edges, problems = kb_graph.load_graph(root)
+        finally:
+            kb_graph._frontmatter.yaml_hazards = original
+        notes = [d for _n, c, d in problems if c == "yaml-unsafe-value"]
+        assert notes and all("could not be checked (IndexError: boom)" in d for d in notes), notes
+
 
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

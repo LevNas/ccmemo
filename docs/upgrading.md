@@ -74,8 +74,10 @@ starts with a character YAML reads as syntax (such as `` ` ``, `#`, `&` or
 `[`). It also covers a few forms that ccmemo reads in its own simplified
 way: a `"` or `\` inside double quotes that is not written as `\"` or `\\`
 (or a `'` inside single quotes that is not doubled), a comment after a
-closing quote or after `[...]`, a `|` or `>` block, and a value wrapped onto
-a second, indented line. Each finding says how to fix it. YAML's typed
+closing quote or after `[...]`, a `|` or `>` block, a value wrapped onto a
+second, indented line (quoting alone does not fix that: put it on one line),
+and a stray line that is neither a key nor a list item. Each finding says
+how to fix it. YAML's typed
 values (`yes`, `null`, numbers) are not checked: ccmemo reads them as text.
 The `/record-knowledge` template now quotes the title.
 

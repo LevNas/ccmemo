@@ -208,6 +208,7 @@ HAZARD_CASES = [
     ("[#a, #b]", True), ("{by: x: y, at: z}", True), ('"a"  # c', True), ('"say "hi""', True),
     ('"C:\\path"', True), ('"tab\\tx"', True), ("'it's'", True), ('"unclosed', True),
     ("[don't, won't]", True), ("# none", True), ("[:]", True), ("[-]", False),
+    ("[a]x", True), ("[[a]]", False),
     ("x  # real comment", False), ("plain words", False), ("https://example.com/a#frag", False),
     ("human:x", False), ("2026/09/x.md", False), ("-dash", False), ("C# notes", False),
     ("a#b c", False), ("100% done", False), ("[a, b]", False), ("{k: v}", False),
@@ -236,6 +237,20 @@ HAZARD_BLOCKS = [
     ('verified:\n  - by: "x" # who\n    at: a: b\n', ["verified.by", "verified.at"]),
     ("verified:\n  - nested:\n      c: d: e\n", ["verified.nested.c"]),
     ("tags: [a,\n  b]\nstatus: x\n", ["tags"]),
+    # "-" alone: valid, its content follows on deeper lines (once crashed)
+    ("tags:\n  -\n    a: b\n", []),
+    ("tags:\n  -\n", []),
+    # the lines of an unclosed flow mapping are not read as keys
+    ("v: {by: x,\n  at: y: z}\nstatus: a\n", ["v"]),
+    # a quoted value wrapped onto the next line: quoting alone does not fix it
+    ('description: "Open when: the hook fails"\n  and log shows X\nstatus: active\n',
+     ["description"]),
+    ("description: Open when: the hook fails\n  and log shows X\nstatus: active\n",
+     ["description", "description"]),
+    # a line that is neither a key nor an item, at the key column
+    ("verified:\n  - by: x\n    cont\n    at: y\n", ["verified.by"]),
+    ("tags: [{a: b, c: d}]\n", ["tags"]),
+    ("tags: [a: b]\n", ["tags"]),
 ]
 
 
@@ -281,11 +296,38 @@ def test_yaml_hazards_flags_only_values_strict_yaml_misreads():
     assert "comment to its own line" in reason, reason
     reason = fm.yaml_hazards("superseded_by: # none\n")[0][1]
     assert "delete the comment" in reason, reason
+    for block, fix in (("tags: [{a: b, c: d}]\n", "flatten it"),
+                       ("title: [a]x\n", "remove the text"),
+                       ("tags: [a: b]\n", "as a mapping")):
+        reason = fm.yaml_hazards(block)[0][1]
+        assert fix in reason, (block, reason)
     # out of scope by design: YAML's typed scalars (documented, not reported)
     for value in ("yes", "null", "~", "0x1F"):
         assert fm.yaml_hazards(f"status: {value}\n") == [], value
     # the lenient reading itself is unchanged
     assert fm.parse("---\ntitle: issue #12 fix\n---\n")[0]["title"] == "issue #12 fix"
+
+
+def _quoted(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _quote_fixed_blocks():
+    """For each case whose advice is "quote the value", the block after quoting."""
+    out = []
+    for value, _ in HAZARD_CASES:
+        found = fm.yaml_hazards(f"title: {value}\n")
+        if found and found[0][1].endswith("quote the value"):
+            out.append((value, f"title: {_quoted(value)}\n"))
+    return out
+
+
+def test_following_the_quote_advice_clears_the_finding():
+    fixed = _quote_fixed_blocks()
+    assert len(fixed) >= 10, fixed
+    for value, block in fixed:
+        assert fm.yaml_hazards(block) == [], (value, block, fm.yaml_hazards(block))
+        assert fm.parse_block(block)["title"] == value, (value, fm.parse_block(block))
 
 
 def test_yaml_hazards_agree_with_pyyaml_when_available():
@@ -308,6 +350,9 @@ def test_yaml_hazards_agree_with_pyyaml_when_available():
             same = False
         found = fm.yaml_hazards(block)
         assert bool(found) != same, (block, found, "PyYAML reads the same" if same else "PyYAML differs")
+    # after following the "quote the value" advice, both readers agree
+    for value, block in _quote_fixed_blocks():
+        assert yaml.safe_load(block)["title"] == value, (value, block)
 
 
 def main():
