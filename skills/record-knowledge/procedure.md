@@ -94,7 +94,8 @@ description: "<trigger condition — WHEN to open this entry, not what it says>"
 - `status:` may be omitted; readers treat a missing or blank status as `active`
 - `verified:` (a list of `{by, at}` events) is appended by `kb_graph.py verify`, never by
   hand. `confidence:` is retired: still parsed, used by nothing, not written for new entries
-- Quote `title:` and `description:` with `"` (inside, write `"` as `\"` and `\` as `\\`). ccmemo's own parser
+- Quote `title:`, `description:` and any other free-text value with `"` (inside, write `"` as `\"`
+  and `\` as `\\`; nothing else is escaped). ccmemo's own parser
   would read `ADR: x` or `issue #12` unquoted, but other YAML readers reject the frontmatter or
   cut the value at ` #`; the lint reports such values as `yaml-unsafe-value`
 

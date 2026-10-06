@@ -238,7 +238,7 @@ def load_graph(root):
             # what other readers of the same file would refuse or misread.
             block = _frontmatter.split(text)[0]
             for key, reason in _frontmatter.yaml_hazards(block or ""):
-                problems.append((nid, "yaml-unsafe-value", f"{key}: {reason} — quote the value"))
+                problems.append((nid, "yaml-unsafe-value", f"{key}: {reason}"))
             if not meta.get("title"):
                 problems.append((nid, "missing-title", "no frontmatter title"))
             desc = " ".join(meta.get("description", "").split())
@@ -1185,7 +1185,9 @@ def cmd_migrate(root, nodes, args):
           + (f", {n_skip} skipped" if n_skip else ""))
     if not args.dry_run and (n_id or n_gen):
         print("next: declare `schema_version: 3` in the frontmatter of "
-              f"{os.path.normpath(os.path.join(root, '..', 'CLAUDE.md'))}, then run `lint`")
+              f"{os.path.normpath(os.path.join(root, '..', 'CLAUDE.md'))}, then run `lint`; "
+              "schema 4 adds no fields, only `yaml-unsafe-value`: quote what `--schema 4 lint` "
+              "lists by hand, then declare 4 (docs/upgrading.md, 1.31)")
 
 
 def cmd_verify(root, nodes, args):
@@ -1551,7 +1553,7 @@ def main():
                     help="output file (default: stdout)")
     mg = sub.add_parser("migrate", help="add the schema-3 fields where missing (idempotent)")
     mg.add_argument("--to", type=int, required=True, metavar="N",
-                    help="target schema_version (3)")
+                    help="target schema_version (3; schema 4 adds no fields to migrate)")
     mg.add_argument("--by", default="claude-code",
                     help="generated.by actor for entries without one (default: %(default)s)")
     mg.add_argument("--tz", default=None, metavar="+HH:MM",

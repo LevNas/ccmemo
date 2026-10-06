@@ -204,11 +204,50 @@ HAZARD_CASES = [
     ("ADR: colon inside", True), ("ends with colon:", True), ("issue #12 fix", True),
     ("`code` first", True), ("#a #b", True), ("&anchor", True), ("!tag", True),
     ("| block", True), ("@at", True), ("- dash space", True), ("[WIP] title", True),
-    ("x  # real comment", False), ("plain words", False), ("https://example.com/a", False),
+    ("!!str x", True), ("[a, b]  # note", True), ("{by: x, at: y} # c", True),
+    ("[#a, #b]", True), ("{by: x: y, at: z}", True), ('"a"  # c', True), ('"say "hi""', True),
+    ('"C:\\path"', True), ('"tab\\tx"', True), ("'it's'", True), ('"unclosed', True),
+    ("x  # real comment", False), ("plain words", False), ("https://example.com/a#frag", False),
     ("human:x", False), ("2026/09/x.md", False), ("-dash", False), ("C# notes", False),
     ("a#b c", False), ("100% done", False), ("[a, b]", False), ("{k: v}", False),
-    ('"quoted: ok #1"', False), ("'single # ok'", False),
+    ('"quoted: ok #1"', False), ("'single # ok'", False), ('["#a", \'#b\']', False),
+    ('"esc \\" ok"', False), ("'it''s'", False), ("2026-09-24T10:00:00+09:00", False),
 ]
+
+# Whole blocks: (block, key paths yaml_hazards reports).
+HAZARD_BLOCKS = [
+    # a block scalar is one finding; its lines are not read as keys
+    ("description: |\n  see: x: y\n  more #1\nstatus: active\n", ["description"]),
+    ("description: >-\n  folded\nstatus: active\n", ["description"]),
+    # a quoted value continued on the next line: one finding, not one per line
+    ('description: "multi\n  line: x #1"\nstatus: active\n', ["description"]),
+    # same-indent sequence under a key
+    ("tags:\n- x: y: z\n- b\n", ["tags.x"]),
+    ("tags:\n- \"#a\"\n- '#b'\n", []),
+    ("verified:\n  - by: human:x\n    at: 2026-09-24T10:00:00Z\n  - {by: process:n, at: 2026-09-25}\n", []),
+    ("superseded_by: 2026/09/x.md   # trailing comment\nstale_after: 2026-12-01\n", []),
+    ("title: ok\r\nnote: a: b\r\n", ["note"]),
+]
+
+
+def _norm(v):
+    """YAML types dates and nulls; this parser keeps strings. Compare on text."""
+    import datetime
+    if isinstance(v, dict):
+        return {str(k): _norm(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    if isinstance(v, (datetime.date, datetime.datetime)):
+        return v.isoformat()
+    if v is None:
+        return ""
+    s = str(v)
+    if len(s) == 10:  # a bare date stays a date on both sides
+        return s
+    try:
+        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return s
 
 
 def test_yaml_hazards_flags_only_values_strict_yaml_misreads():
@@ -226,6 +265,11 @@ def test_yaml_hazards_flags_only_values_strict_yaml_misreads():
     for text in (STRICT_STRING_TAGS, LIST_TAGS, NESTED):
         assert fm.yaml_hazards(fm.split(text)[0]) == [], text
     assert [k for k, _ in fm.yaml_hazards(fm.split(STRING_TAGS)[0])] == ["title"]
+    for block, paths in HAZARD_BLOCKS:
+        assert [k for k, _ in fm.yaml_hazards(block)] == paths, (block, fm.yaml_hazards(block))
+    # each reason names its fix; quoting is not the fix for every case
+    reason = fm.yaml_hazards("tags: [a, b]  # note\n")[0][1]
+    assert "comment to its own line" in reason, reason
     # the lenient reading itself is unchanged
     assert fm.parse("---\ntitle: issue #12 fix\n---\n")[0]["title"] == "issue #12 fix"
 
@@ -236,14 +280,18 @@ def test_yaml_hazards_agree_with_pyyaml_when_available():
     except ImportError:
         print("  (skip: PyYAML not installed — cross-check not run)")
         return
-    for value, hazard in HAZARD_CASES:
-        block = f"title: {value}\n"
+    # The function's answer itself (not the labels above): a hazard is reported
+    # exactly when PyYAML rejects the block or reads it differently.
+    blocks = [f"title: {v}\n" for v, _ in HAZARD_CASES]
+    blocks += [b.replace("\r", "") for b, _ in HAZARD_BLOCKS]
+    for block in blocks:
         try:
             ref = yaml.safe_load(block)
-            same = isinstance(ref, dict) and (ref.get("title") or "") == fm.parse_block(block)["title"]
+            same = isinstance(ref, dict) and _norm(ref) == _norm(fm.parse_block(block))
         except yaml.YAMLError:
             same = False
-        assert same != hazard, (value, hazard)
+        found = fm.yaml_hazards(block)
+        assert bool(found) != same, (block, found, "PyYAML reads the same" if same else "PyYAML differs")
 
 
 def main():

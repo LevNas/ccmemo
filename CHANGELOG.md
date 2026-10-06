@@ -11,18 +11,26 @@ All notable changes to this project will be documented in this file.
   whitespace follows, so it reads `title: ADR: x` and `title: issue #12 fix`
   as written, and the lint, which uses the same parser, never saw a problem.
   Other readers of the same files reject the first frontmatter outright and
-  read the second title as `issue`. The check flags a value that contains
-  `: ` or ends with `:`, contains ` #`, or starts with a character that
-  cannot start an unquoted value. It is advisory until a knowledge base
-  declares `schema_version: 4` (see docs/upgrading.md); the scaffolded
-  knowledge-base `CLAUDE.md` now declares 4. On one real knowledge base it
+  read the second title as `issue`. The check flags an unquoted value that
+  contains `: ` or ends with `:`, contains ` #`, or starts with a character
+  YAML reads as syntax; a `"` or `\` inside double quotes not written as
+  `\"` or `\\`, or a `'` inside single quotes not doubled; a comment after a
+  closing quote or a flow collection; a hazard inside `[...]`/`{...}`; and a
+  `|`/`>` block, which the parser reads as the indicator alone. Each finding
+  names its fix. It is advisory until a knowledge base declares
+  `schema_version: 4` (see docs/upgrading.md). On one real knowledge base it
   listed 6 of about 320 entries, the same 6 that PyYAML rejects or reads
   differently. Parsing itself is unchanged.
 
 ### Changed
 - The `/record-knowledge` template quotes `title:`, and the note that titles
-  may contain `: ` unquoted is replaced by advice to quote `title:` and
-  `description:`.
+  may contain `: ` unquoted is replaced by advice to quote free-text values.
+  The README and docs/examples.md examples quote their titles too.
+- Both knowledge-base scaffolds (`skills/record-knowledge/assets/` and
+  `templates/knowledge/`, which still declared 2) now declare
+  `schema_version: 4`; they contain no entries to fix.
+- `migrate --to 3` ends by pointing at schema 4, which adds no fields to
+  migrate: quote what `--schema 4 lint` lists, then declare 4.
 
 ## [1.30.5] - 2026-10-06
 

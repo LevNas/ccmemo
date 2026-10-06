@@ -67,11 +67,15 @@ script, an editor, a static site generator) do not. The first title makes
 them reject the whole frontmatter, tags and status included. The second
 gives them the title `issue`, because ` #` starts a comment in YAML.
 
-A new lint check, `yaml-unsafe-value`, reports an unquoted value that a
-strict YAML reader would reject or read differently: one that contains `: `
-or ends with `:`, one that contains ` #`, or one that starts with a
-character that cannot start an unquoted value (such as `` ` ``, `#`, `&` or
-`[`). The `/record-knowledge` template now quotes the title.
+A new lint check, `yaml-unsafe-value`, reports a value that a strict YAML
+reader would reject or read differently. Most are unquoted values: one that
+contains `: ` or ends with `:`, one that contains ` #`, or one that starts
+with a character YAML reads as syntax (such as `` ` ``, `#`, `&` or `[`).
+It also covers a few quoted and structured forms that ccmemo reads in its
+own simplified way: a `"` or `\` inside double quotes that is not written as
+`\"` or `\\`, a comment after a closing quote or after `[...]`, and a `|`
+or `>` block. Each finding says how to fix it. The `/record-knowledge`
+template now quotes the title.
 
 This is the rule of **schema version 4**. ccmemo itself reads these entries
 as before, so nothing in search or in the hooks changes.
@@ -85,6 +89,12 @@ as before, so nothing in search or in the hooks changes.
   check is not enforced yet.
 
 ### If you want to adopt the new rule
+
+Declaring 4 also enforces the rules of versions 2 and 3. If your knowledge
+base declares less than 3, adopt those first:
+[1.27](#127-entry-ids-and-verification) (and
+[1.26](#126-descriptions-and-link-labels) below 2). Otherwise step 1 lists
+their findings too.
 
 1. List the values:
 

@@ -73,7 +73,7 @@ a repository can extend that index to every document it contains
 
 ```markdown
 ---
-title: Docker Compose port conflict with host nginx
+title: "Docker Compose port conflict with host nginx"
 author: "@alice"
 created: 2026-03-02
 status: active
