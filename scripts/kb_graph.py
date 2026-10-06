@@ -120,11 +120,12 @@ DESCRIPTION_MAX_CHARS = 320
 # (`schema_version: 2`); checks introduced by a later schema are still
 # reported on an older corpus, but as *advisory* findings that do not affect
 # the exit code, until the declaration is raised (see docs/upgrading.md).
-SCHEMA_VERSION_LATEST = 3
+SCHEMA_VERSION_LATEST = 4
 SCHEMA_CHECKS = {
     2: {"missing-description", "description-length", "unlabeled-link",
         "amends-unreciprocated", "extends-unreciprocated"},
     3: {"missing-id", "duplicate-id", "missing-generated", "invalid-actor"},
+    4: {"yaml-unsafe-value"},
 }
 # Informational at every schema: they describe the state of the knowledge,
 # not a broken convention, so they never fail a pre-commit lint.
@@ -233,6 +234,18 @@ def load_graph(root):
                 problems.append((nid, "stale-after-passed",
                                  f"stale_after {meta.get('stale_after')} has passed — re-check, "
                                  "then move the date or deprecate"))
+            # Schema 4: the shared parser is more lenient than YAML, so check
+            # what other readers of the same file would refuse or misread.
+            # load_graph serves every subcommand, so a fault in this check
+            # becomes a finding instead of stopping them.
+            block = _frontmatter.split(text)[0]
+            try:
+                hazards = _frontmatter.yaml_hazards(block or "")
+            except Exception as exc:  # noqa: BLE001
+                hazards = [("-", f"could not be checked ({type(exc).__name__}: {exc}) — "
+                                 "please report this as a ccmemo bug")]
+            for key, reason in hazards:
+                problems.append((nid, "yaml-unsafe-value", f"{key}: {reason}"))
             if not meta.get("title"):
                 problems.append((nid, "missing-title", "no frontmatter title"))
             desc = " ".join(meta.get("description", "").split())
@@ -1179,7 +1192,9 @@ def cmd_migrate(root, nodes, args):
           + (f", {n_skip} skipped" if n_skip else ""))
     if not args.dry_run and (n_id or n_gen):
         print("next: declare `schema_version: 3` in the frontmatter of "
-              f"{os.path.normpath(os.path.join(root, '..', 'CLAUDE.md'))}, then run `lint`")
+              f"{os.path.normpath(os.path.join(root, '..', 'CLAUDE.md'))}, then run `lint`; "
+              "schema 4 adds no fields, only `yaml-unsafe-value`: quote what `--schema 4 lint` "
+              "lists by hand, then declare 4 (docs/upgrading.md, 1.31)")
 
 
 def cmd_verify(root, nodes, args):
@@ -1545,7 +1560,7 @@ def main():
                     help="output file (default: stdout)")
     mg = sub.add_parser("migrate", help="add the schema-3 fields where missing (idempotent)")
     mg.add_argument("--to", type=int, required=True, metavar="N",
-                    help="target schema_version (3)")
+                    help="target schema_version (3; schema 4 adds no fields to migrate)")
     mg.add_argument("--by", default="claude-code",
                     help="generated.by actor for entries without one (default: %(default)s)")
     mg.add_argument("--tz", default=None, metavar="+HH:MM",

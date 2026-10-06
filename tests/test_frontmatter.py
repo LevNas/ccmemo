@@ -199,6 +199,162 @@ def test_cross_check_with_pyyaml_when_available():
         assert norm(ours) == norm(ref), (norm(ours), norm(ref))
 
 
+# Unquoted values: (value, a strict YAML reader rejects it or reads it differently).
+HAZARD_CASES = [
+    ("ADR: colon inside", True), ("ends with colon:", True), ("issue #12 fix", True),
+    ("`code` first", True), ("#a #b", True), ("&anchor", True), ("!tag", True),
+    ("| block", True), ("@at", True), ("- dash space", True), ("[WIP] title", True),
+    ("!!str x", True), ("[a, b]  # note", True), ("{by: x, at: y} # c", True),
+    ("[#a, #b]", True), ("{by: x: y, at: z}", True), ('"a"  # c', True), ('"say "hi""', True),
+    ('"C:\\path"', True), ('"tab\\tx"', True), ("'it's'", True), ('"unclosed', True),
+    ("[don't, won't]", True), ("# none", True), ("[:]", True), ("[-]", False),
+    ("[a]x", True), ("[[a]]", False),
+    ("x  # real comment", False), ("plain words", False), ("https://example.com/a#frag", False),
+    ("human:x", False), ("2026/09/x.md", False), ("-dash", False), ("C# notes", False),
+    ("a#b c", False), ("100% done", False), ("[a, b]", False), ("{k: v}", False),
+    ('"quoted: ok #1"', False), ("'single # ok'", False), ('["#a", \'#b\']', False),
+    ('"esc \\" ok"', False), ("'it''s'", False), ("2026-09-24T10:00:00+09:00", False),
+]
+
+# Whole blocks: (block, key paths yaml_hazards reports).
+HAZARD_BLOCKS = [
+    # a block scalar is one finding; its lines are not read as keys
+    ("description: |\n  see: x: y\n  more #1\nstatus: active\n", ["description"]),
+    ("description: >-\n  folded\nstatus: active\n", ["description"]),
+    # a quoted value continued on the next line: one finding, not one per line
+    ('description: "multi\n  line: x #1"\nstatus: active\n', ["description"]),
+    # same-indent sequence under a key
+    ("tags:\n- x: y: z\n- b\n", ["tags.x"]),
+    ("tags:\n- \"#a\"\n- '#b'\n", []),
+    ("verified:\n  - by: human:x\n    at: 2026-09-24T10:00:00Z\n  - {by: process:n, at: 2026-09-25}\n", []),
+    ("superseded_by: 2026/09/x.md   # trailing comment\nstale_after: 2026-12-01\n", []),
+    ("title: ok\r\nnote: a: b\r\n", ["note"]),
+    # a hand-wrapped plain value: this parser drops the rest, status included
+    ("description: Open this when the hook misfires\n  and the log shows X\nstatus: active\n",
+     ["description"]),
+    ("verified:\n  - by: x\n      more\n    at: y\n", ["verified.by"]),
+    # a flagged value spans only its own lines, not the sibling keys of its item
+    ('verified:\n  - by: "x" # who\n    at: a: b\n', ["verified.by", "verified.at"]),
+    ("verified:\n  - nested:\n      c: d: e\n", ["verified.nested.c"]),
+    ("tags: [a,\n  b]\nstatus: x\n", ["tags"]),
+    # "-" alone: valid, its content follows on deeper lines (once crashed)
+    ("tags:\n  -\n    a: b\n", []),
+    ("tags:\n  -\n", []),
+    # the lines of an unclosed flow mapping are not read as keys
+    ("v: {by: x,\n  at: y: z}\nstatus: a\n", ["v"]),
+    # a quoted value wrapped onto the next line: quoting alone does not fix it
+    ('description: "Open when: the hook fails"\n  and log shows X\nstatus: active\n',
+     ["description"]),
+    ("description: Open when: the hook fails\n  and log shows X\nstatus: active\n",
+     ["description", "description"]),
+    # a line that is neither a key nor an item, at the key column
+    ("verified:\n  - by: x\n    cont\n    at: y\n", ["verified.by"]),
+    ("tags: [{a: b, c: d}]\n", ["tags"]),
+    ("tags: [a: b]\n", ["tags"]),
+]
+
+
+def _norm(v):
+    """YAML types dates and nulls; this parser keeps strings. Compare on text."""
+    import datetime
+    if isinstance(v, dict):
+        return {str(k): _norm(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    if isinstance(v, (datetime.date, datetime.datetime)):
+        return v.isoformat()
+    if v is None:
+        return ""
+    s = str(v)
+    if len(s) == 10:  # a bare date stays a date on both sides
+        return s
+    try:
+        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return s
+
+
+def test_yaml_hazards_flags_only_values_strict_yaml_misreads():
+    for value, hazard in HAZARD_CASES:
+        found = fm.yaml_hazards(f"title: {value}\n")
+        assert bool(found) == hazard, (value, found)
+        if hazard:
+            assert found[0][0] == "title", found
+    # nested keys and list items get a dotted path; the safe fixtures are clean
+    block = ("tags:\n  - \"#a\"\n  - #b\n"
+             "verified:\n  - by: human:x\n    at: 2026-09-24T10:00:00Z\n  - by: a: b\n"
+             "generated:\n  by: claude-code\n  at: issue #3\n")
+    assert [k for k, _ in fm.yaml_hazards(block)] == ["tags", "verified.by", "generated.at"], \
+        fm.yaml_hazards(block)
+    for text in (STRICT_STRING_TAGS, LIST_TAGS, NESTED):
+        assert fm.yaml_hazards(fm.split(text)[0]) == [], text
+    assert [k for k, _ in fm.yaml_hazards(fm.split(STRING_TAGS)[0])] == ["title"]
+    for block, paths in HAZARD_BLOCKS:
+        assert [k for k, _ in fm.yaml_hazards(block)] == paths, (block, fm.yaml_hazards(block))
+    # each reason names its fix; quoting is not the fix for every case
+    reason = fm.yaml_hazards("tags: [a, b]  # note\n")[0][1]
+    assert "comment to its own line" in reason, reason
+    reason = fm.yaml_hazards("superseded_by: # none\n")[0][1]
+    assert "delete the comment" in reason, reason
+    for block, fix in (("tags: [{a: b, c: d}]\n", "flatten it"),
+                       ("title: [a]x\n", "remove the text"),
+                       ("tags: [a: b]\n", "as a mapping")):
+        reason = fm.yaml_hazards(block)[0][1]
+        assert fix in reason, (block, reason)
+    # out of scope by design: YAML's typed scalars (documented, not reported)
+    for value in ("yes", "null", "~", "0x1F"):
+        assert fm.yaml_hazards(f"status: {value}\n") == [], value
+    # the lenient reading itself is unchanged
+    assert fm.parse("---\ntitle: issue #12 fix\n---\n")[0]["title"] == "issue #12 fix"
+
+
+def _quoted(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _quote_fixed_blocks():
+    """For each case whose advice is "quote the value", the block after quoting."""
+    out = []
+    for value, _ in HAZARD_CASES:
+        found = fm.yaml_hazards(f"title: {value}\n")
+        if found and found[0][1].endswith("quote the value"):
+            out.append((value, f"title: {_quoted(value)}\n"))
+    return out
+
+
+def test_following_the_quote_advice_clears_the_finding():
+    fixed = _quote_fixed_blocks()
+    assert len(fixed) >= 10, fixed
+    for value, block in fixed:
+        assert fm.yaml_hazards(block) == [], (value, block, fm.yaml_hazards(block))
+        assert fm.parse_block(block)["title"] == value, (value, fm.parse_block(block))
+
+
+def test_yaml_hazards_agree_with_pyyaml_when_available():
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        print("  (skip: PyYAML not installed — cross-check not run)")
+        return
+    # The function's answer itself (not the labels above), on every case in this
+    # file: a hazard is reported when PyYAML rejects the block or reads it
+    # differently, and not otherwise. This covers the listed forms only; typed
+    # scalars (checked above) are out of scope.
+    blocks = [f"title: {v}\n" for v, _ in HAZARD_CASES]
+    blocks += [b.replace("\r", "") for b, _ in HAZARD_BLOCKS]
+    for block in blocks:
+        try:
+            ref = yaml.safe_load(block)
+            same = isinstance(ref, dict) and _norm(ref) == _norm(fm.parse_block(block))
+        except yaml.YAMLError:
+            same = False
+        found = fm.yaml_hazards(block)
+        assert bool(found) != same, (block, found, "PyYAML reads the same" if same else "PyYAML differs")
+    # after following the "quote the value" advice, both readers agree
+    for value, block in _quote_fixed_blocks():
+        assert yaml.safe_load(block)["title"] == value, (value, block)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

@@ -1,5 +1,5 @@
 ---
-schema_version: 3   # ccmemo conventions this knowledge base commits to (see docs/upgrading.md)
+schema_version: 4   # ccmemo conventions this knowledge base commits to (see docs/upgrading.md)
 ---
 
 # Knowledge Base

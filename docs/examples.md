@@ -12,7 +12,7 @@ With `/record-knowledge`, Claude Code saves the discovery:
 
 ```markdown
 ---
-title: webpack 6 requires updated config format
+title: "webpack 6 requires updated config format"
 author: "@alice"
 created: 2026-03-08
 status: active

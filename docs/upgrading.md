@@ -19,8 +19,9 @@ choose to. Most updates need nothing from you.
 
 | You are updating from | What to read |
 |---|---|
-| 1.30.0 or later | Nothing to do. |
-| 1.29.x | Usually nothing. Read [1.30: the active task follows your branch](#130-the-active-task-follows-your-branch) if `.claude/tasks/readme.md` lists more than one active task. |
+| 1.31.0 or later | Nothing to do. |
+| 1.30.x | Nothing breaks. [1.31: frontmatter that other YAML readers reject](#131-frontmatter-that-other-yaml-readers-reject) describes one new lint check, advisory until you opt in. |
+| 1.29.x | The section above. Otherwise usually nothing: read [1.30: the active task follows your branch](#130-the-active-task-follows-your-branch) if `.claude/tasks/readme.md` lists more than one active task. |
 | 1.28.x | The section above, plus [1.29: working state comes back after compaction](#129-working-state-comes-back-after-compaction) describes one thing you may notice. |
 | 1.27.x | Nothing to do. The section above, plus [1.28: the index can cover the whole repository](#128-the-index-can-cover-the-whole-repository), which describes an opt-in and two things you may notice. |
 | 1.26.x | The section above, plus [1.27: entry ids and verification](#127-entry-ids-and-verification). One command plus one line; nothing breaks if you skip it. |
@@ -54,6 +55,72 @@ Until you do, the lint still lists what the new rules would report, but
 under a heading marked *advisory*, and the exit code stays 0. A pre-commit
 hook therefore keeps passing after an update. When you want to try the new
 rules before committing to them, run `kb_graph.py --schema 2 lint`.
+
+## 1.31: frontmatter that other YAML readers reject
+
+### What changed
+
+ccmemo reads frontmatter with its own small parser, which is more lenient
+than YAML. It reads `title: ADR: storage layout` and `title: issue #12 fix`
+the way you meant them. Other tools that read the same files (a PyYAML
+script, an editor, a static site generator) do not. The first title makes
+them reject the whole frontmatter, tags and status included. The second
+gives them the title `issue`, because ` #` starts a comment in YAML.
+
+A new lint check, `yaml-unsafe-value`, reports values in forms that a
+strict YAML reader rejects or reads differently. Most are unquoted values:
+one that contains `: ` or ends with `:`, one that contains ` #`, or one that
+starts with a character YAML reads as syntax (such as `` ` ``, `#`, `&` or
+`[`). It also covers a few forms that ccmemo reads in its own simplified
+way: a `"` or `\` inside double quotes that is not written as `\"` or `\\`
+(or a `'` inside single quotes that is not doubled), a comment after a
+closing quote or after `[...]`, a `|` or `>` block, a value wrapped onto a
+second, indented line (quoting alone does not fix that: put it on one line),
+and a stray line that is neither a key nor a list item. Each finding says
+how to fix it. YAML's typed
+values (`yes`, `null`, numbers) are not checked: ccmemo reads them as text.
+The `/record-knowledge` template now quotes the title.
+
+This is the rule of **schema version 4**. ccmemo itself reads these entries
+as before, so nothing in search or in the hooks changes.
+
+### What you will notice after the update
+
+- `kb_graph.py lint` lists such values under the advisory heading. The exit
+  code does not change. On one real knowledge base of about 320 entries, it
+  listed 6 titles.
+- After Claude edits an entry with such a value, a one-line notice says the
+  check is not enforced yet.
+
+### If you want to adopt the new rule
+
+Declaring 4 also enforces the rules of versions 2 and 3. If your knowledge
+base declares less than 3, adopt those first:
+[1.27](#127-entry-ids-and-verification) (and
+[1.26](#126-descriptions-and-link-labels) below 2). Otherwise step 1 lists
+their findings too.
+
+1. List the values:
+
+   ```bash
+   python3 scripts/kb_graph.py --root .claude/knowledge/entries --schema 4 lint
+   ```
+
+2. Put each listed value in double quotes, by hand. Inside the quotes,
+   write `"` as `\"` and `\` as `\\`. There is no `migrate` step for this:
+   usually only a few values are affected, and you should see each one.
+
+   ```yaml
+   # Before
+   title: ADR: storage layout for issue #12
+   # After
+   title: "ADR: storage layout for issue #12"
+   ```
+
+3. Write `schema_version: 4` at the top of `.claude/knowledge/CLAUDE.md`.
+
+4. Run the lint again, confirm it reports 0 findings, and commit the changed
+   entries.
 
 ## 1.30: the active task follows your branch
 
