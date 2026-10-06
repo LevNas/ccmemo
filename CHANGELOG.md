@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [1.31.0] - 2026-10-06
 
 ### Added
-- Lint check `yaml-unsafe-value` (schema 4): an unquoted frontmatter value
+- Lint check `yaml-unsafe-value` (schema 4): frontmatter values in forms
   that a strict YAML reader rejects or reads differently (#68). ccmemo's
   parser splits a key at the first `:` and treats `#` as a comment only when
   whitespace follows, so it reads `title: ADR: x` and `title: issue #12 fix`
@@ -13,14 +13,18 @@ All notable changes to this project will be documented in this file.
   Other readers of the same files reject the first frontmatter outright and
   read the second title as `issue`. The check flags an unquoted value that
   contains `: ` or ends with `:`, contains ` #`, or starts with a character
-  YAML reads as syntax; a `"` or `\` inside double quotes not written as
-  `\"` or `\\`, or a `'` inside single quotes not doubled; a comment after a
-  closing quote or a flow collection; a hazard inside `[...]`/`{...}`; and a
-  `|`/`>` block, which the parser reads as the indicator alone. Each finding
-  names its fix. It is advisory until a knowledge base declares
-  `schema_version: 4` (see docs/upgrading.md). On one real knowledge base it
-  listed 6 of about 320 entries, the same 6 that PyYAML rejects or reads
-  differently. Parsing itself is unchanged.
+  YAML reads as syntax, or is only a comment; a `"` or `\` inside double
+  quotes not written as `\"` or `\\`, or a `'` inside single quotes not
+  doubled; a comment after a closing quote or a flow collection, a flow
+  collection not closed on its line, and an item inside `[...]`/`{...}` in
+  any of these forms or with a quote character inside; a `|`/`>` block,
+  which the parser reads as the indicator alone; and a plain value wrapped
+  onto a deeper line, which the parser drops along with the keys after it.
+  Each finding names its fix. YAML's typed scalars (`yes`, `null`, numbers)
+  are out of scope. It is advisory until a knowledge base declares
+  `schema_version: 4` (see docs/upgrading.md). On one real knowledge base of
+  about 320 entries it listed 6, the same 6 that PyYAML rejected or read
+  differently there. Parsing itself is unchanged.
 
 ### Changed
 - The `/record-knowledge` template quotes `title:`, and the note that titles

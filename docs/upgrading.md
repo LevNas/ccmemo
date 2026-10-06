@@ -67,15 +67,17 @@ script, an editor, a static site generator) do not. The first title makes
 them reject the whole frontmatter, tags and status included. The second
 gives them the title `issue`, because ` #` starts a comment in YAML.
 
-A new lint check, `yaml-unsafe-value`, reports a value that a strict YAML
-reader would reject or read differently. Most are unquoted values: one that
-contains `: ` or ends with `:`, one that contains ` #`, or one that starts
-with a character YAML reads as syntax (such as `` ` ``, `#`, `&` or `[`).
-It also covers a few quoted and structured forms that ccmemo reads in its
-own simplified way: a `"` or `\` inside double quotes that is not written as
-`\"` or `\\`, a comment after a closing quote or after `[...]`, and a `|`
-or `>` block. Each finding says how to fix it. The `/record-knowledge`
-template now quotes the title.
+A new lint check, `yaml-unsafe-value`, reports values in forms that a
+strict YAML reader rejects or reads differently. Most are unquoted values:
+one that contains `: ` or ends with `:`, one that contains ` #`, or one that
+starts with a character YAML reads as syntax (such as `` ` ``, `#`, `&` or
+`[`). It also covers a few forms that ccmemo reads in its own simplified
+way: a `"` or `\` inside double quotes that is not written as `\"` or `\\`
+(or a `'` inside single quotes that is not doubled), a comment after a
+closing quote or after `[...]`, a `|` or `>` block, and a value wrapped onto
+a second, indented line. Each finding says how to fix it. YAML's typed
+values (`yes`, `null`, numbers) are not checked: ccmemo reads them as text.
+The `/record-knowledge` template now quotes the title.
 
 This is the rule of **schema version 4**. ccmemo itself reads these entries
 as before, so nothing in search or in the hooks changes.

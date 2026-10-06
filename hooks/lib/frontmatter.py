@@ -245,12 +245,21 @@ _PLAIN_FIRST_BAD = set("`&*!|>%@#,[]{}")
 _COLON_RE = re.compile(r":(?:\s|$)")
 _SPACE_HASH_RE = re.compile(r"\s#")
 _BLOCK_SCALAR_RE = re.compile(r"^[|>][-+0-9]*$")
-_QUOTE_FIX = "end the line at the closing quote"
+
+# Reasons after which the value goes on over deeper-indented lines: those
+# lines belong to the value, so they are not read as keys.
+_SPANS_LINES = ("is a block scalar", "has text or a comment after",
+                "does not close on this line")
 
 
-def _plain_hazard(s: str) -> str | None:
+def _plain_hazard(s: str, in_flow: bool = False) -> str | None:
     """Reason a strict YAML reader rejects or misreads the unquoted ``s``."""
-    if s[0] in _PLAIN_FIRST_BAD or (s[0] in "-?:" and (len(s) == 1 or s[1].isspace())):
+    if s[0] == "#" and (len(s) == 1 or s[1].isspace()):
+        return ("is only a comment, which YAML reads as an empty value but this parser "
+                "keeps as text — delete the comment or move it to its own line")
+    alone_ok = in_flow and s == "-"
+    if s[0] in _PLAIN_FIRST_BAD or (
+            s[0] in "-?:" and (len(s) == 1 or s[1].isspace()) and not alone_ok):
         return f'starts with "{s[0]}", which YAML reads as syntax, not text — quote the value'
     if _COLON_RE.search(s):
         return 'contains ": " or ends with ":", so strict YAML rejects the whole frontmatter — quote the value'
@@ -264,7 +273,8 @@ def _quoted_hazard(s: str) -> str | None:
     outer quotes and unescapes ``\\"``/``\\\\`` (double) or ``''`` (single)."""
     q = s[0]
     if len(s) < 2 or s[-1] != q:
-        return f"has text or a comment after the closing quote, or no closing quote — {_QUOTE_FIX}"
+        return ("has text or a comment after the closing quote, or no closing quote — "
+                "end the line at the closing quote")
     inner = s[1:-1]
     if q == "'":
         if "'" in inner.replace("''", ""):
@@ -282,7 +292,7 @@ def _quoted_hazard(s: str) -> str | None:
     return None
 
 
-def _value_hazard(raw: str) -> str | None:
+def _value_hazard(raw: str, in_flow: bool = False) -> str | None:
     """Reason a strict YAML reader rejects ``raw`` or reads it differently."""
     s = raw.strip()
     if not s:
@@ -295,12 +305,16 @@ def _value_hazard(raw: str) -> str | None:
             if _strip_comment(s).endswith(close):
                 return ("is a flow collection followed by a comment, which this parser reads "
                         "as plain text — move the comment to its own line")
-            return f'starts with "{s[0]}" but is not a flow collection — quote the value'
+            return (f'starts with "{s[0]}" but does not close on this line — put a list or '
+                    "mapping on one line, or quote the value if it is text")
         for item in _split_flow(s[1:-1]):
             if s[0] == "{":
                 m = _KEY_RE.match(item)
                 item = (m.group(2) or "") if m else item
-            reason = _value_hazard(item)
+            if item and item[0] not in "\"'" and ("'" in item or '"' in item):
+                return ("has an unquoted item with a quote character inside, which this "
+                        "parser takes as an opening quote — quote that item")
+            reason = _value_hazard(item, in_flow=True)
             if reason:
                 return "has an item that " + reason
         return None
@@ -310,38 +324,65 @@ def _value_hazard(raw: str) -> str | None:
     if _BLOCK_SCALAR_RE.match(s):
         return ('is a block scalar, which this parser reads as the indicator alone — '
                 'write the value on one line in quotes')
-    return _plain_hazard(s)
+    return _plain_hazard(s, in_flow)
 
 
 def yaml_hazards(block: str) -> list[tuple[str, str]]:
-    """Values that a strict YAML reader rejects or reads differently.
+    """Values in forms that this parser and a strict YAML reader read apart.
 
-    This parser is more lenient than YAML: it splits a key at the first ``:``,
-    only treats ``#`` as a comment when whitespace follows, and reads quotes,
-    flow collections and block scalars in a simplified way. Other readers of
-    the same files (PyYAML, editors, static site generators) do not, so
-    ``title: ADR: x`` makes them reject the whole frontmatter and
-    ``title: issue #12 fix`` gives them ``issue``. Returns ``(key path,
-    reason)`` pairs, e.g. ``("title", ...)`` or ``("verified.by", ...)``; each
-    reason ends with the fix. Parsing itself is unchanged.
+    This parser is more lenient than YAML, and other readers of the same files
+    (PyYAML, editors, static site generators) are not. The forms reported:
+
+    * an unquoted value that contains ``: `` or ends with ``:``, contains
+      `` #``, starts with a character YAML reads as syntax, or is only a
+      comment (``title: ADR: x`` makes them reject the whole frontmatter;
+      ``title: issue #12 fix`` gives them ``issue``)
+    * a quoted value with text after the closing quote, no closing quote, a
+      ``"`` or ``\\`` inside double quotes not written ``\\"``/``\\\\``, or an
+      undoubled ``'`` inside single quotes
+    * a flow collection followed by a comment, not closed on its line, or with
+      an item in any of these forms or with a quote character inside it
+    * a ``|``/``>`` block scalar, and a plain value continued on a deeper line
+      (this parser drops the continuation and may stop reading the keys after)
+
+    Other differences are out of scope, notably YAML's typed scalars
+    (``yes``, ``null``, ``~``, numbers), which this parser keeps as strings.
+    Returns ``(key path, reason)`` pairs, e.g. ``("title", ...)`` or
+    ``("verified.by", ...)``; each reason ends with the fix. Parsing itself is
+    unchanged.
     """
     out: list[tuple[str, str]] = []
-    stack: list[tuple[int, str]] = []  # enclosing keys: (indent, key)
-    skip_deeper = None  # indent of a value that continues on deeper lines
+    stack: list[tuple[int, str]] = []  # enclosing keys: (column, key)
+    skip_deeper = None  # lines deeper than this column belong to a flagged value
+    scalar = None  # (column, path) of the last key with a one-line plain value
     for indent, content in _lines(block):
         if skip_deeper is not None:
             if indent > skip_deeper:
                 continue
             skip_deeper = None
+        if scalar is not None:
+            col, spath = scalar
+            scalar = None
+            if indent > col:
+                out.append((spath, "continues on a deeper-indented line, which this parser "
+                            "drops (and may stop reading the keys after it) — put the value "
+                            "on one line in quotes"))
+                skip_deeper = col
+                continue
         if _is_item(content):
             while stack and stack[-1][0] > indent:
                 stack.pop()
             value = content[1:].strip()
             path = [k for _, k in stack]
+            col = indent  # a bare item has no sibling keys
             km = _KEY_RE.match(value)
             if km and value[0] not in "\"'[{":
                 path.append(km.group(1))
                 value = km.group(2) or ""
+                col = indent + 2  # the column of "key" after "- "
+                if not value.strip():
+                    stack.append((col, km.group(1)))
+                    continue
         else:
             while stack and stack[-1][0] >= indent:
                 stack.pop()
@@ -350,14 +391,18 @@ def yaml_hazards(block: str) -> list[tuple[str, str]]:
                 continue
             path = [k for _, k in stack] + [m.group(1)]
             value = m.group(2) or ""
+            col = indent
             if not value.strip():
                 stack.append((indent, m.group(1)))
                 continue
+        key = ".".join(path) or "-"
         reason = _value_hazard(value)
         if reason:
-            out.append((".".join(path) or "-", reason))
-            if reason.startswith(("is a block scalar", "has text or a comment after")):
-                skip_deeper = indent  # its continuation lines are not keys
+            out.append((key, reason))
+            if reason.startswith(_SPANS_LINES):
+                skip_deeper = col
+        elif value.strip()[0] not in "\"'[{|>":
+            scalar = (col, key)
     return out
 
 

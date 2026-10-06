@@ -207,6 +207,7 @@ HAZARD_CASES = [
     ("!!str x", True), ("[a, b]  # note", True), ("{by: x, at: y} # c", True),
     ("[#a, #b]", True), ("{by: x: y, at: z}", True), ('"a"  # c', True), ('"say "hi""', True),
     ('"C:\\path"', True), ('"tab\\tx"', True), ("'it's'", True), ('"unclosed', True),
+    ("[don't, won't]", True), ("# none", True), ("[:]", True), ("[-]", False),
     ("x  # real comment", False), ("plain words", False), ("https://example.com/a#frag", False),
     ("human:x", False), ("2026/09/x.md", False), ("-dash", False), ("C# notes", False),
     ("a#b c", False), ("100% done", False), ("[a, b]", False), ("{k: v}", False),
@@ -227,6 +228,14 @@ HAZARD_BLOCKS = [
     ("verified:\n  - by: human:x\n    at: 2026-09-24T10:00:00Z\n  - {by: process:n, at: 2026-09-25}\n", []),
     ("superseded_by: 2026/09/x.md   # trailing comment\nstale_after: 2026-12-01\n", []),
     ("title: ok\r\nnote: a: b\r\n", ["note"]),
+    # a hand-wrapped plain value: this parser drops the rest, status included
+    ("description: Open this when the hook misfires\n  and the log shows X\nstatus: active\n",
+     ["description"]),
+    ("verified:\n  - by: x\n      more\n    at: y\n", ["verified.by"]),
+    # a flagged value spans only its own lines, not the sibling keys of its item
+    ('verified:\n  - by: "x" # who\n    at: a: b\n', ["verified.by", "verified.at"]),
+    ("verified:\n  - nested:\n      c: d: e\n", ["verified.nested.c"]),
+    ("tags: [a,\n  b]\nstatus: x\n", ["tags"]),
 ]
 
 
@@ -270,6 +279,11 @@ def test_yaml_hazards_flags_only_values_strict_yaml_misreads():
     # each reason names its fix; quoting is not the fix for every case
     reason = fm.yaml_hazards("tags: [a, b]  # note\n")[0][1]
     assert "comment to its own line" in reason, reason
+    reason = fm.yaml_hazards("superseded_by: # none\n")[0][1]
+    assert "delete the comment" in reason, reason
+    # out of scope by design: YAML's typed scalars (documented, not reported)
+    for value in ("yes", "null", "~", "0x1F"):
+        assert fm.yaml_hazards(f"status: {value}\n") == [], value
     # the lenient reading itself is unchanged
     assert fm.parse("---\ntitle: issue #12 fix\n---\n")[0]["title"] == "issue #12 fix"
 
@@ -280,8 +294,10 @@ def test_yaml_hazards_agree_with_pyyaml_when_available():
     except ImportError:
         print("  (skip: PyYAML not installed — cross-check not run)")
         return
-    # The function's answer itself (not the labels above): a hazard is reported
-    # exactly when PyYAML rejects the block or reads it differently.
+    # The function's answer itself (not the labels above), on every case in this
+    # file: a hazard is reported when PyYAML rejects the block or reads it
+    # differently, and not otherwise. This covers the listed forms only; typed
+    # scalars (checked above) are out of scope.
     blocks = [f"title: {v}\n" for v, _ in HAZARD_CASES]
     blocks += [b.replace("\r", "") for b, _ in HAZARD_BLOCKS]
     for block in blocks:
