@@ -1116,8 +1116,8 @@ def test_strict_yaml_findings_with_pyyaml():
         assert set(got) == {("colon.md", "yaml-strict-rejected"), ("hash.md", "yaml-strict-mismatch")}, got
         assert all(f["severity"] == "advisory" for f in got.values())
         assert "line 2, column" in got[("colon.md", "yaml-strict-rejected")]["detail"], got
-        assert got[("hash.md", "yaml-strict-mismatch")]["detail"].endswith(": title"), got
-        assert "issue" not in got[("hash.md", "yaml-strict-mismatch")]["detail"].split(":")[-1]
+        assert got[("hash.md", "yaml-strict-mismatch")]["detail"] == \
+            "read differently by PyYAML and ccmemo: title", got
         assert res.returncode == plain_res.returncode  # exit code unchanged
         assert "skipped" not in res.stderr
         # files filter works as for other checks
@@ -1132,6 +1132,9 @@ def test_strict_yaml_fault_is_a_finding_and_load_graph_is_untouched():
     import yaml
     with tempfile.TemporaryDirectory() as base:
         root = _strict_kb(base, STRICT_ENTRIES)
+        # one entry with an enforced finding (missing title), so the exit code is 1
+        with open(os.path.join(root, "20260701-100009-a-notitle.md"), "w", encoding="utf-8") as f:
+            f.write("---\nstatus: active\n---\n\nx\n")
         original = yaml.safe_load
 
         def boom(_b):
@@ -1142,9 +1145,22 @@ def test_strict_yaml_fault_is_a_finding_and_load_graph_is_untouched():
             nodes, _e, problems = kb_graph.load_graph(root)
         finally:
             yaml.safe_load = original
-        assert available and len(found) == len(STRICT_ENTRIES), found
-        assert all("could not be checked (RuntimeError: boom)" in d for _n, _c, d in found), found
-        assert len(nodes) == len(STRICT_ENTRIES)
+        # safe_load is PyYAML's side: any exception from it is a rejection, not a ccmemo fault
+        assert available and len(found) == len(STRICT_ENTRIES) + 1, found
+        assert all(c == "yaml-strict-rejected" and "RuntimeError" in d and "boom" not in d
+                   for _n, c, d in found), found
+        # a fault on ccmemo's side is "could not be checked"
+        orig_pb = kb_graph._frontmatter.parse_block
+
+        def pb_boom(_b):
+            raise IndexError("boom")
+        kb_graph._frontmatter.parse_block = pb_boom
+        try:
+            found2, _a = kb_graph.strict_yaml_findings(root)
+        finally:
+            kb_graph._frontmatter.parse_block = orig_pb
+        ours = [d for _n, c, d in found2 if c == "yaml-strict-mismatch"]
+        assert ours and all("could not be checked (IndexError: boom)" in d for d in ours), found2
         assert not any(c.startswith("yaml-strict") for _n, c, _d in problems)
         # through cmd_lint: exit code is the same with and without the faulty check
         codes = []
@@ -1157,7 +1173,44 @@ def test_strict_yaml_fault_is_a_finding_and_load_graph_is_untouched():
                     codes.append(e.code)
             finally:
                 yaml.safe_load = original
-        assert codes[0] == codes[1], codes
+        assert codes == [1, 1], codes
+
+
+def test_strict_yaml_non_yaml_errors_are_rejections_without_the_value():
+    if not _has_pyyaml():
+        print("      (skipped: PyYAML not importable)")
+        return
+    with tempfile.TemporaryDirectory() as base:
+        root = _strict_kb(base, {
+            "20260701-100000-a-date.md": "title: ok\ncreated: 2026-02-30",
+            "20260701-100001-a-tag.md": "title: ok\na: !!int secretword",
+            "20260701-100002-a-notmap.md": "- a\n- b",
+        })
+        res, got = _strict_checks(root, "--strict-yaml")
+        assert set(got) == {("date.md", "yaml-strict-rejected"), ("tag.md", "yaml-strict-rejected"),
+                            ("notmap.md", "yaml-strict-mismatch")}, got
+        for name in ("date.md", "tag.md"):
+            d = got[(name, "yaml-strict-rejected")]["detail"]
+            assert "ValueError" in d and "secretword" not in d and "30" not in d, d
+        assert got[("notmap.md", "yaml-strict-mismatch")]["detail"].endswith("(the whole block is not a mapping)")
+        assert "could not be checked" not in res.stdout
+
+
+def test_strict_yaml_reads_only_the_listed_files():
+    if not _has_pyyaml():
+        print("      (skipped: PyYAML not importable)")
+        return
+    import yaml
+    with tempfile.TemporaryDirectory() as base:
+        root = _strict_kb(base, STRICT_ENTRIES)
+        seen = []
+        original = yaml.safe_load
+        yaml.safe_load = lambda b: (seen.append(b), original(b))[1]
+        try:
+            kb_graph.strict_yaml_findings(root, [os.path.join(root, "20260701-100000-a-colon.md")])
+        finally:
+            yaml.safe_load = original
+        assert seen == ["title: ADR: x\n"], seen
 
 
 def main() -> int:

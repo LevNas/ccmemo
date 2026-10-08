@@ -177,6 +177,19 @@ def parse_frontmatter(text):
     return meta
 
 
+def _entry_paths(root):
+    """Yield (id, path) for every entry file under `root`: `*.md` except CLAUDE.md.
+
+    The same rule as the walk in load_graph (kept there to leave that loop
+    untouched); change both together.
+    """
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in sorted(filenames):
+            if fn.endswith(".md") and fn != "CLAUDE.md":
+                path = os.path.join(dirpath, fn)
+                yield os.path.relpath(path, root), path
+
+
 def load_graph(root):
     """Return (nodes, edges, problems).
 
@@ -671,24 +684,34 @@ def _stringify(value):
     return str(value)
 
 
-def _yaml_error_line(exc):
-    """First line of a PyYAML error, with the file line and column when it has them."""
-    first = (str(exc).splitlines() or [type(exc).__name__])[0]
+def _yaml_rejection(exc):
+    """Detail for a block PyYAML cannot read.
+
+    A `yaml.YAMLError` keeps PyYAML's `problem` sentence (it may name a tag,
+    alias or character from the file) and the file line and column when PyYAML
+    has them. Any other exception (an impossible date, `!!int` on text, a deeply
+    nested block) only gives its type: its message can quote the value itself.
+    """
+    import yaml
     mark = getattr(exc, "problem_mark", None)
-    if mark is None:
-        return first
-    # the block starts on file line 2 (line 1 is the opening `---`)
-    return f"{getattr(exc, 'problem', None) or first} (line {mark.line + 2}, column {mark.column + 1})"
+    where = f" (line {mark.line + 2}, column {mark.column + 1})" if mark is not None else ""
+    if isinstance(exc, yaml.YAMLError):
+        # the block starts on file line 2 (line 1 is the opening `---`)
+        problem = getattr(exc, "problem", None) or (str(exc).splitlines() or [""])[0]
+        return problem + where
+    return (f"PyYAML cannot convert a value ({type(exc).__name__}), e.g. an impossible "
+            "date or a !!int tag on text" + where)
 
 
-def strict_yaml_findings(root):
+def strict_yaml_findings(root, only_files=None):
     """Opt-in `lint --strict-yaml`: compare ccmemo's parser with PyYAML.
 
-    Two comparisons per entry, no types: (1) `yaml.safe_load` raises
-    `yaml.YAMLError` -> `yaml-strict-rejected`; (2) `yaml.BaseLoader` (every
-    value as text) and `parse_block` disagree on a top-level key ->
-    `yaml-strict-mismatch`. Returns (findings, available). Each block is checked
-    on its own: a fault becomes a finding, never an exception, and this is
+    Two comparisons per entry, no types: (1) `yaml.safe_load` raises anything
+    -> `yaml-strict-rejected` (a strict reader cannot read the block);
+    (2) `yaml.BaseLoader` (every value as text) and `parse_block` disagree on a
+    top-level key -> `yaml-strict-mismatch`. `only_files` limits which entries
+    are read. Returns (findings, available). Each block is checked on its own:
+    a fault in ccmemo's side becomes a finding, never an exception, and this is
     called from `lint` only, never from `load_graph`.
     """
     try:
@@ -697,35 +720,37 @@ def strict_yaml_findings(root):
         return [], False
     findings = []
     root = os.path.abspath(root)
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for fn in sorted(filenames):
-            if not fn.endswith(".md") or fn == "CLAUDE.md":
+    keep = {os.path.basename(f) for f in only_files} if only_files else None
+    for nid, path in _entry_paths(root):
+        if keep is not None and os.path.basename(nid) not in keep:
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                block = _frontmatter.split(f.read())[0]
+            if not block or not block.strip():
                 continue
-            path = os.path.join(dirpath, fn)
-            nid = os.path.relpath(path, root)
             try:
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    block = _frontmatter.split(f.read())[0]
-                if not block or not block.strip():
-                    continue
-                try:
-                    yaml.safe_load(block)
-                except yaml.YAMLError as exc:
-                    findings.append((nid, "yaml-strict-rejected", _yaml_error_line(exc)))
-                    continue
-                strict = yaml.load(block, Loader=yaml.BaseLoader)  # noqa: S506
-                ours = _stringify(_frontmatter.parse_block(block))
-                if not isinstance(strict, dict):
-                    strict = {}
-                keys = sorted(k for k in set(strict) | set(ours)
-                              if strict.get(k) != ours.get(k))
-                if keys:
-                    findings.append((nid, "yaml-strict-mismatch",
-                                     "read differently by PyYAML and ccmemo: " + ", ".join(keys)))
-            except Exception as exc:  # noqa: BLE001
+                yaml.safe_load(block)
+            except Exception as exc:  # noqa: BLE001 - any failure means "not readable"
+                findings.append((nid, "yaml-strict-rejected", _yaml_rejection(exc)))
+                continue
+            strict = yaml.load(block, Loader=yaml.BaseLoader)  # noqa: S506
+            ours = _stringify(_frontmatter.parse_block(block))
+            if strict is not None and not isinstance(strict, dict):
                 findings.append((nid, "yaml-strict-mismatch",
-                                 f"could not be checked ({type(exc).__name__}: {exc}) — "
-                                 "please report this as a ccmemo bug"))
+                                 "read differently by PyYAML and ccmemo: "
+                                 "(the whole block is not a mapping)"))
+                continue
+            strict = strict or {}
+            keys = sorted(k for k in set(strict) | set(ours)
+                          if strict.get(k) != ours.get(k))
+            if keys:
+                findings.append((nid, "yaml-strict-mismatch",
+                                 "read differently by PyYAML and ccmemo: " + ", ".join(keys)))
+        except Exception as exc:  # noqa: BLE001
+            findings.append((nid, "yaml-strict-mismatch",
+                             f"could not be checked ({type(exc).__name__}: {exc}) — "
+                             "please report this as a ccmemo bug"))
     return findings, True
 
 
@@ -733,7 +758,7 @@ def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json, schema=
              root=None, strict_yaml=False):
     findings = list(problems)
     if strict_yaml and root is not None:
-        extra, available = strict_yaml_findings(root)
+        extra, available = strict_yaml_findings(root, only_files)
         if not available:
             print("yaml-strict: skipped — PyYAML is not importable "
                   "(try: uv run --with pyyaml ...)", file=sys.stderr)

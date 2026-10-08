@@ -7,8 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Added
 - `lint --strict-yaml`: an opt-in comparison of each entry's frontmatter with
   PyYAML (#72). It makes two checks and never compares types:
-  `yaml-strict-rejected` when `yaml.safe_load` raises (the detail is the
-  PyYAML error with its line and column), and `yaml-strict-mismatch` when
+  `yaml-strict-rejected` when `yaml.safe_load` raises (the detail is PyYAML's
+  problem sentence, which may name a tag, alias or character from the file, with
+  the file line and column when PyYAML has them; any other exception from
+  `safe_load`, such as an impossible date or `!!int` on text, is also a
+  rejection and gives only the exception type, never its message), and `yaml-strict-mismatch` when
   `yaml.BaseLoader` (every value read as text) and ccmemo's parser disagree
   (the detail lists the top-level keys that differ, not the values). Both are
   always advisory: they never change the exit code and are not tied to a
