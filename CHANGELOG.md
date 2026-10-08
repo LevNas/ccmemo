@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `lint --strict-yaml`: an opt-in comparison of each entry's frontmatter with
+  PyYAML (#72). It makes two checks and never compares types:
+  `yaml-strict-rejected` when `yaml.safe_load` raises (the detail is PyYAML's
+  problem sentence, which may name a tag, alias or character from the file, with
+  the file line and column when PyYAML has them; any other exception from
+  `safe_load`, such as an impossible date or `!!int` on text, is also a
+  rejection and gives only the exception type, never its message), and `yaml-strict-mismatch` when
+  `yaml.BaseLoader` (every value read as text) and ccmemo's parser disagree
+  (the detail lists the top-level keys that differ, not the values). Both are
+  always advisory: they never change the exit code and are not tied to a
+  `schema_version`. Typed values (`yes`, `null`, numbers, dates) and keys that
+  are typed words (`{"null": c}`) are out of scope. Without PyYAML the flag
+  prints one `yaml-strict: skipped` line on stderr and the `--json` output is
+  unchanged. It runs from `lint` only, not `load_graph`, and a fault in one
+  entry's check becomes a `could not be checked (...)` finding. The hook still
+  needs only the standard library.
+
 ## [1.31.0] - 2026-10-06
 
 ### Added

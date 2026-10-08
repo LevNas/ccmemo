@@ -159,7 +159,7 @@ and `superseded_by:` still pointing at an old path, in recorded order, so
 chains resolve hop by hop. Needs an index; prints `nothing to relink` when
 there is nothing left.
 
-### `lint [files...]`
+### `lint [files...] [--strict-yaml]`
 
 Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 
@@ -185,10 +185,22 @@ Deterministic integrity checks; exits 1 when there are findings, 0 when clean:
 | `missing-generated` | no `generated:` — or not a `{by, at}` mapping with an ISO 8601 `at` |
 | `invalid-actor` | `generated.by` or a `verified[].by` is not `human:<handle>`, `claude-code[/<model-id>]` or `process:<name>` |
 | `yaml-unsafe-value` | a frontmatter value in a form that a strict YAML reader rejects or reads differently from ccmemo's own parser. Unquoted: contains `: ` or ends with `:` (the whole frontmatter is rejected), contains ` #` (the rest is read as a comment), starts with a character such as `` ` ``, `#`, `&`, `[` that YAML reads as syntax, or is only a comment. Quoted: text after the closing quote, no closing quote, a `"` or `\` inside double quotes not written as `\"`/`\\`, an undoubled `'` inside single quotes. `[...]`/`{...}`: a comment or other text after it, not closed on its line, a nested collection with commas, or an item in one of these forms or with a quote character inside. Also a `\|`/`>` block, a one-line value continued on a deeper line, and a line that is neither a key nor a list item. Other tools (PyYAML, editors, site generators) read these files too. The finding says how to fix it. Out of scope: YAML's typed scalars (`yes`, `null`, numbers), which ccmemo keeps as text |
+| `yaml-strict-rejected` | only with `lint --strict-yaml` (needs PyYAML): `yaml.safe_load` raises on the frontmatter (a `YAMLError`, or any other exception such as an impossible date or `!!int` on text). The detail is PyYAML's problem sentence (it may name a tag, alias or character from the file) plus the file line and column when PyYAML has them; for a non-`YAMLError` exception it is only the exception type and a fixed explanation, never the message, which can quote the value. Always advisory, whatever the schema |
+| `yaml-strict-mismatch` | only with `lint --strict-yaml`: PyYAML (`BaseLoader`, every value read as text) and ccmemo's parser disagree; the detail lists the top-level keys that differ, not the values (or says the whole block is not a mapping). Always advisory. Out of scope, as for `yaml-unsafe-value`: typed values (`yes`, `null`, numbers, dates) and keys that are typed words (`{"null": c}`), which are not compared |
 | `verification-expired` | the latest `verified.at` is older than `generated.at`: the body was rewritten since it was checked (informational) |
 | `stale-after-passed` | `stale_after:` is behind today (informational) |
 | `duplicate-title` | two entries share a title — hard to tell apart in search results (informational) |
 | `divergent-mirror` | the same `id` at several paths in the search index (a mirror in another corpus, or a copy) with different content: the copy that differs from the knowledge-base one is named; an exact mirror is silent (informational; needs an index built with `scope: repo` to see other corpora) |
+
+**`--strict-yaml`** adds `yaml-strict-rejected` and `yaml-strict-mismatch`: it
+reads every entry's frontmatter with PyYAML and compares it with ccmemo's
+parser, as a check on what `yaml-unsafe-value` knows about. Only these two
+comparisons are made; types are not compared. The findings are always
+advisory (the exit code does not change) and are not tied to a
+`schema_version`. It needs PyYAML (`uv run --with pyyaml python3 scripts/kb_graph.py lint --strict-yaml`);
+without it one `yaml-strict: skipped` line goes to stderr and nothing else
+changes. It is not run by the post-write hook, which uses only the standard
+library.
 
 **Schema-gated checks.** Checks are enforced only when the knowledge base
 declares the schema that introduced them in the frontmatter of
