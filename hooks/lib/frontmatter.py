@@ -418,8 +418,7 @@ def _flow_hazard(s: str) -> str | None:
     for item in items:
         if s[0] == "{":
             if item[:1] in ("\"", "'"):
-                return ("has a quoted key, which this parser keeps with its quotes — "
-                        "write the key without quotes")
+                return _quoted_key_hazard(item)
             m = _KEY_RE.match(item)
             item = (m.group(2) or "") if m else item
         if item[:1] in ("[", "{") and not item.endswith("]" if item[0] == "[" else "}"):
@@ -469,6 +468,34 @@ def _spans_lines(raw: str) -> bool:
     return bool(_BLOCK_SCALAR_RE.match(_strip_comment(s)))
 
 
+def _item_sibling_key(lines, idx: int, indent: int, col: int, empty: bool) -> bool:
+    """For the ``-   key:`` item on ``lines[idx]`` (dash at ``indent``, key at
+    ``col``): whether a later line is another key of the same item, at the key
+    column (where YAML reads it) or at ``indent + 2`` (where this parser looks).
+    Lines deeper than ``col`` are the key's own value and are stepped over, and
+    so are list items at ``col`` when the key's value is empty."""
+    j = idx + 1
+    while j < len(lines) and (lines[j][0] > col or (
+            empty and lines[j][0] == col and _is_item(lines[j][1]))):
+        j += 1
+    return j < len(lines) and not _is_item(lines[j][1]) and lines[j][0] in (col, indent + 2)
+
+
+_PLAIN_KEY_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_ ./\-]*")
+
+
+def _quoted_key_hazard(item: str) -> str:
+    """Reason for a flow-mapping item ``item`` that starts with a quote."""
+    end = _quote_end(item)
+    key = item[1:end] if end > 0 else ""
+    if _PLAIN_KEY_RE.fullmatch(key) and key == key.strip():
+        return ("has a quoted key, which this parser keeps with its quotes — "
+                "write the key without quotes")
+    return ("has a quoted key, which this parser keeps with its quotes, and the key has "
+            "characters that need the quotes (or is malformed) — rename the key to one "
+            "made of letters, digits, spaces and . _ / -")
+
+
 def yaml_hazards(block: str) -> list[tuple[str, str]]:
     """Values in forms that this parser and a strict YAML reader read apart.
 
@@ -496,8 +523,9 @@ def yaml_hazards(block: str) -> list[tuple[str, str]]:
       (this parser drops the continuation and may stop reading the keys
       after it); a line that is neither a key nor a list item (this parser
       skips it)
-    * a ``-`` followed by several spaces before a key, when the next line is
-      a key at the item's real key column or two columns after the dash (this
+    * a ``-`` followed by several spaces before a key, when a later line is
+      another key at the item's real key column or two columns after the dash
+      (lines nested under the key itself are stepped over; this
       parser looks for the item's next keys there only; the check, not the
       parser, reads them at the real column); a block list inside a list item
       (``- - a``), which this parser reads as the text ``- a``; reported once
@@ -548,8 +576,7 @@ def yaml_hazards(block: str) -> list[tuple[str, str]]:
                 value = km.group(2) or ""
                 bare_item = False
                 col = indent + 1 + gap  # the column of "key" after "- "
-                if (gap > 1 and idx + 1 < len(lines) and not _is_item(lines[idx + 1][1])
-                        and lines[idx + 1][0] in (col, indent + 2)):
+                if gap > 1 and _item_sibling_key(lines, idx, indent, col, not value.strip()):
                     # this parser looks for the next keys of the item at indent + 2
                     out.append((".".join(path), "has several spaces between \"-\" and the key, "
                                 "which this parser does not follow for the keys below it — use "

@@ -221,6 +221,8 @@ HAZARD_CASES = [
     ('[["a,b"], c]', False), ("[[',']]", False), ("{a: ['x,y']}", False), ("[{a: 'x,y'}]", False),
     # a quoted key keeps its quotes here; the cause is the key
     ('{"a": "x, y"}', True), ("{'a': 'x, y'}", True), ('{"a": b}', True),
+    ('{"a, b": c}', True), ('{"a #b": c}', True), ('{"a: b": c}', True),
+    ('{"-a": c}', True), ('{"[a]": c}', True),
     # a comment inside the brackets cuts the item and the closing bracket
     ("[a, b # note]", True), ("{a: b # x}", True),
     # a bracket inside a quoted item does not close the collection
@@ -285,6 +287,13 @@ HAZARD_BLOCKS = [
     ("v:\n  -   a:\n        b: c\n", []),
     ("v:\n  -  a:\n       - x\n", []),
     ("v:\n  -   by:\n      - a\n", []),
+    # ... but a sibling key after the key's own nested value is reported: this
+    # parser drops it, YAML reads it as a key of the item
+    ("v:\n  -   a:\n        b: c\n      d: e\n", ["v.a"]),
+    ("v:\n  -   by:\n      - a\n      at: y\n", ["v.by"]),
+    ("v:\n  -    a:\n         - x\n       d: e\n", ["v.a"]),
+    ("v:\n  -     a:\n          b:\n            c: d\n        e: f\n", ["v.a"]),
+    ("v:\n  -   a:\n        b: c\n      d: e: f\n", ["v.a", "v.d"]),
     # an unclosed flow collection owns the deeper lines that follow
     ("tags: ['a, b]\n  c]\nstatus: x\n", ["tags"]),
     ("k: [[a, b]\n  c]\nstatus: x\n", ["k"]),
@@ -415,6 +424,12 @@ ADVICE_CASES = [
     ('k: {"a": "x, y"}\n', 'k: {a: "x, y"}\n', "without quotes"),
     ("k: {'a': 'x, y'}\n", 'k: {a: "x, y"}\n', "without quotes"),
     ('k: {"a": b}\n', "k: {a: b}\n", "without quotes"),
+    ('k: {"a b": c}\n', "k: {a b: c}\n", "without quotes"),
+    # a sibling key after the key's own nested value
+    ("v:\n  -   a:\n        b: c\n      d: e\n", "v:\n  - a:\n      b: c\n    d: e\n",
+     "one space after"),
+    ("v:\n  -   by:\n      - a\n      at: y\n", "v:\n  - by:\n      - a\n    at: y\n",
+     "one space after"),
     ("k: [a, b # note]\n", 'k: [a, "b # note"]\n', "quote the item"),
 ]
 
@@ -442,6 +457,18 @@ def test_advice_for_the_reported_gaps_fixes_them():
     assert "quote the value" not in fm.yaml_hazards("tags: [a, b] #note\n")[0][1]
     assert "quote the value" not in fm.yaml_hazards("v:\n  - - a\n")[0][1]
     assert "quote that item" not in fm.yaml_hazards('k: {"a": "x, y"}\n')[0][1]
+
+
+def test_quoted_key_that_cannot_be_unquoted_gets_no_misleading_advice():
+    # taking the quotes off these keys changes the data (a key split at the
+    # comma) or leaves the block rejected, so the reason must not say to do it
+    for key in ("a, b", "a #b", "a: b", "-a", "[a]", "a{b}", " a", ""):
+        for quote in ('"', "'"):
+            block = f"k: {{{quote}{key}{quote}: c}}\n"
+            found = fm.yaml_hazards(block)
+            assert len(found) == 1, (block, found)
+            assert "without quotes" not in found[0][1], (block, found)
+            assert "rename the key" in found[0][1], (block, found)
 
 
 def test_comment_needs_a_space_before_the_hash():
