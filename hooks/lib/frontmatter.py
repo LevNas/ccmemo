@@ -311,13 +311,17 @@ def _quoted_hazard(s: str) -> str | None:
 _MAX_FLOW_DEPTH = 50
 
 
-def _split_flow_yaml(inner: str, mapping: bool) -> list[str]:
-    """Split a flow collection body on commas the way YAML does: a quote opens a
-    quoted item only at the start of an item (or of a mapping value), and a
-    quote inside an unquoted item is text. ``_split_flow`` opens one anywhere."""
+def _split_flow_yaml(inner: str) -> list[str]:
+    """Split a flow collection body on commas outside quotes the way YAML opens
+    them: a quote starts a quoted item only at the start of an item or of a
+    value (after ``,``, ``[``, ``{`` or ``: ``); a quote inside an unquoted
+    item is text. ``_split_flow`` opens one anywhere. Brackets are not
+    followed: like ``_split_flow`` this splits at every comma outside quotes."""
     items: list[str] = []
     buf: list[str] = []
     quote = None
+    can_open = True  # a quote here would start a quoted item
+    prev = ""
     i, n = 0, len(inner)
     while i < n:
         ch = inner[i]
@@ -332,15 +336,22 @@ def _split_flow_yaml(inner: str, mapping: bool) -> list[str]:
                     i += 1
                 else:
                     quote = None
-        elif ch == ",":
-            items.append("".join(buf).strip())
-            buf = []
         else:
-            if ch in ("'", '"'):
-                text = "".join(buf)
-                if not text.strip() or (mapping and re.fullmatch(r"[^'\"]*:\s+", text)):
-                    quote = ch
-            buf.append(ch)
+            if ch == ",":
+                items.append("".join(buf).strip())
+                buf = []
+                can_open = True
+            else:
+                buf.append(ch)
+                if ch in ("'", '"'):
+                    if can_open:
+                        quote = ch
+                    can_open = False
+                elif ch.isspace():
+                    can_open = can_open or prev == ":"
+                else:
+                    can_open = ch in "[{"
+        prev = ch
         i += 1
     tail = "".join(buf).strip()
     if tail or items:
@@ -406,6 +417,9 @@ def _flow_hazard(s: str) -> str | None:
     items = _split_flow(s[1:-1])
     for item in items:
         if s[0] == "{":
+            if item[:1] in ("\"", "'"):
+                return ("has a quoted key, which this parser keeps with its quotes — "
+                        "write the key without quotes")
             m = _KEY_RE.match(item)
             item = (m.group(2) or "") if m else item
         if item[:1] in ("[", "{") and not item.endswith("]" if item[0] == "[" else "}"):
@@ -416,7 +430,7 @@ def _flow_hazard(s: str) -> str | None:
             return "has an item that " + reason
     # A quote in the middle of an unquoted item is text to YAML but opens a quote
     # here; that only matters when the two readers then split the items apart.
-    if items != _split_flow_yaml(s[1:-1], s[0] == "{"):
+    if items != _split_flow_yaml(s[1:-1]):
         return ("has an item with a quote character inside that this parser takes as an "
                 "opening quote, so it splits the items at other commas than YAML does — "
                 "quote that item")
@@ -432,7 +446,8 @@ def _value_hazard(raw: str, in_flow: bool = False) -> str | None:
         return _quoted_hazard(s)
     if s[0] in "[{":
         return _flow_hazard(s)
-    s = _strip_comment(s)
+    if not in_flow:  # inside [...] / {...} a " #" cuts the item and the closing bracket
+        s = _strip_comment(s)
     if not s:
         return None
     if _BLOCK_SCALAR_RE.match(s):
@@ -450,7 +465,7 @@ def _spans_lines(raw: str) -> bool:
     if s[0] in "\"'":
         return _quote_end(s) == -1
     if s[0] in "[{":
-        return ("]" if s[0] == "[" else "}") not in s
+        return _flow_scan(s)[0] == -1
     return bool(_BLOCK_SCALAR_RE.match(_strip_comment(s)))
 
 
@@ -471,23 +486,29 @@ def yaml_hazards(block: str) -> list[tuple[str, str]]:
       without a space after the ``#``) or other text (also text that ends in a
       bracket, as in ``[a, b]]`` or ``[a][b]``), not closed on its line, nested
       deeper than ``_MAX_FLOW_DEPTH``, with a nested collection containing
-      commas, with an item in any of these forms, or with an unquoted item
-      whose quote character makes this parser split the items at other commas
-      than YAML does (``[don't, won't]``; ``[x, it's]`` is not reported)
+      commas, with a quoted key in a flow mapping (``{"a": b}``; this parser
+      keeps the quotes), with an item in any of these forms (also a `` #``
+      comment inside it, as in ``[a, b # c]``), or with an unquoted item whose
+      quote character makes this parser split the items at other commas than
+      YAML does (``[don't, won't]``; ``[x, it's]`` and quoted items inside
+      nested collections are not reported)
     * a ``|``/``>`` block scalar; a one-line value continued on a deeper line
       (this parser drops the continuation and may stop reading the keys
       after it); a line that is neither a key nor a list item (this parser
       skips it)
-    * a ``-`` followed by several spaces before a key, with a deeper line
-      after it (this parser looks for the item's next keys two columns after
-      the dash); a block list inside a list item (``- - a``), which this
-      parser reads as the text ``- a``; reported once per key
+    * a ``-`` followed by several spaces before a key, when the next line is
+      a key at the item's real key column or two columns after the dash (this
+      parser looks for the item's next keys there only; the check, not the
+      parser, reads them at the real column); a block list inside a list item
+      (``- - a``), which this parser reads as the text ``- a``; reported once
+      per key, and the deeper lines of such an item belong to it
 
     Other differences are out of scope, notably YAML's typed scalars
     (``yes``, ``null``, ``~``, numbers), which this parser keeps as strings.
     Returns ``(key path, reason)`` pairs, e.g. ``("title", ...)`` or
-    ``("verified.by", ...)``; each reason ends with the fix. Never raises, whatever
-    the input. Parsing itself is
+    ``("verified.by", ...)``; each reason ends with the fix. It is written not to
+    raise on any ``str`` input: flow nesting is capped at ``_MAX_FLOW_DEPTH``
+    and the tests run a fixed-seed fuzz; that is a check, not a proof. Parsing itself is
     unchanged.
     """
     out: list[tuple[str, str]] = []
@@ -527,7 +548,8 @@ def yaml_hazards(block: str) -> list[tuple[str, str]]:
                 value = km.group(2) or ""
                 bare_item = False
                 col = indent + 1 + gap  # the column of "key" after "- "
-                if gap > 1 and idx + 1 < len(lines) and lines[idx + 1][0] > indent:
+                if (gap > 1 and idx + 1 < len(lines) and not _is_item(lines[idx + 1][1])
+                        and lines[idx + 1][0] in (col, indent + 2)):
                     # this parser looks for the next keys of the item at indent + 2
                     out.append((".".join(path), "has several spaces between \"-\" and the key, "
                                 "which this parser does not follow for the keys below it — use "
@@ -560,12 +582,12 @@ def yaml_hazards(block: str) -> list[tuple[str, str]]:
                 nested_seq.add(key)
                 reason = ('holds a block list inside a list item ("- - a"), which this parser '
                           "reads as the text of the item — write the inner list on its own "
-                          'lines under a bare "-", or as [a, b]')
+                          'lines under a bare "-"')
         else:
             reason = _value_hazard(value)
         if reason:
             out.append((key, reason))
-        if _spans_lines(value):
+        if _spans_lines(value) or (bare_item and _is_item(value.strip())):
             skip_deeper = col
         else:
             one_line = (col, key)

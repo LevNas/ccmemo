@@ -217,6 +217,14 @@ HAZARD_CASES = [
     ("[x, it's]", False), ("[don't]", False), ("[a \"b\" c]", False),
     ("{a: it's}", False), ("{a: 'x, y'}", False), ('{a: "b, c"}', False),
     ("[it's, 'x, y']", True), ("{a: it's, b: won't}", True),
+    # quoted items inside nested collections are read alike by both
+    ('[["a,b"], c]', False), ("[[',']]", False), ("{a: ['x,y']}", False), ("[{a: 'x,y'}]", False),
+    # a quoted key keeps its quotes here; the cause is the key
+    ('{"a": "x, y"}', True), ("{'a': 'x, y'}", True), ('{"a": b}', True),
+    # a comment inside the brackets cuts the item and the closing bracket
+    ("[a, b # note]", True), ("{a: b # x}", True),
+    # a bracket inside a quoted item does not close the collection
+    ('["a]"]', False), ("['x]']", False), ("[a, 'b]']", False),
     ("x  # real comment", False), ("plain words", False), ("https://example.com/a#frag", False),
     ("human:x", False), ("2026/09/x.md", False), ("-dash", False), ("C# notes", False),
     ("a#b c", False), ("100% done", False), ("[a, b]", False), ("{k: v}", False),
@@ -269,6 +277,17 @@ HAZARD_BLOCKS = [
     ("v:\n  - -\n  - - a\n", ["v"]),
     ("v:\n  -\n    - a\n  -\n    - b\n", []),
     ("v:\n  - by: - a\n", ["v.by"]),
+    # the deeper lines of a nested list belong to it: one finding
+    ("v:\n  - - a\n    - b\n", ["v"]),
+    # one finding per key, not one for the whole block
+    ("v:\n  - - a\nw:\n  - - b\n", ["v", "w"]),
+    # several spaces after "-": only a next key where the item's keys are expected
+    ("v:\n  -   a:\n        b: c\n", []),
+    ("v:\n  -  a:\n       - x\n", []),
+    ("v:\n  -   by:\n      - a\n", []),
+    # an unclosed flow collection owns the deeper lines that follow
+    ("tags: ['a, b]\n  c]\nstatus: x\n", ["tags"]),
+    ("k: [[a, b]\n  c]\nstatus: x\n", ["k"]),
     # several spaces before a plain item are read the same by both
     ("v:\n  -   a\n  -   b\n", []),
 ]
@@ -387,6 +406,16 @@ ADVICE_CASES = [
      "one space after"),
     ("v:\n  - - a\n  - - b\n", "v:\n  -\n    - a\n  -\n    - b\n", "own lines"),
     ("v:\n  - -\n  - - a\n", "v:\n  -\n    -\n  -\n    - a\n", "own lines"),
+    # a nested list written over several lines: one finding, not a second
+    # "continues on a deeper line" whose advice would turn the list into a string
+    ("v:\n  - - a\n    - b\n", "v:\n  -\n    - a\n    - b\n", "own lines"),
+    # the advice is not "[a, b]": that would turn a mapping into a pair
+    ("v:\n  - - a: b\n", "v:\n  -\n    - a: b\n", "own lines"),
+    # a quoted key: the cause is the key, quoting the item would change the value
+    ('k: {"a": "x, y"}\n', 'k: {a: "x, y"}\n', "without quotes"),
+    ("k: {'a': 'x, y'}\n", 'k: {a: "x, y"}\n', "without quotes"),
+    ('k: {"a": b}\n', "k: {a: b}\n", "without quotes"),
+    ("k: [a, b # note]\n", 'k: [a, "b # note"]\n', "quote the item"),
 ]
 
 
@@ -398,13 +427,13 @@ def test_advice_for_the_reported_gaps_fixes_them():
         print("  (skip: PyYAML not installed — only the stdlib steps run)")
     for block, fixed, words in ADVICE_CASES:
         found = fm.yaml_hazards(block)
-        assert found, block
-        assert all(words in r for _, r in found), (block, found)
+        assert len(found) == 1, (block, found)
+        assert words in found[0][1], (block, found)
         # following the advice clears the finding ...
         assert fm.yaml_hazards(fixed) == [], (block, fixed, fm.yaml_hazards(fixed))
         # ... and the data is the same list or mapping, not a string
         fixed_meta = fm.parse_block(fixed)
-        assert not any(isinstance(v, str) and v[:1] in "[{-" for v in fixed_meta.values()), fixed_meta
+        assert not any(isinstance(v, str) and v and v[0] in "[{-" for v in fixed_meta.values()), fixed_meta
         # ... and PyYAML reads what this parser reads
         if yaml is not None:
             assert _norm(yaml.safe_load(fixed)) == _norm(fixed_meta), (fixed, yaml.safe_load(fixed), fixed_meta)
@@ -412,13 +441,24 @@ def test_advice_for_the_reported_gaps_fixes_them():
     # have made the data a string: it is not the advice for these
     assert "quote the value" not in fm.yaml_hazards("tags: [a, b] #note\n")[0][1]
     assert "quote the value" not in fm.yaml_hazards("v:\n  - - a\n")[0][1]
+    assert "quote that item" not in fm.yaml_hazards('k: {"a": "x, y"}\n')[0][1]
+
+
+def test_comment_needs_a_space_before_the_hash():
+    # "#" after a space is a comment even without a space after it; without a
+    # space before it, it is text after the collection
+    assert "comment" in fm.yaml_hazards("tags: [a, b] #note\n")[0][1]
+    assert "comment" in fm.yaml_hazards("tags: [a, b]   #\n")[0][1]
+    assert "text after" in fm.yaml_hazards("tags: [a, b]#note\n")[0][1]
 
 
 def test_docstring_lists_the_forms_of_the_gaps():
     doc = fm.yaml_hazards.__doc__
     for form in ("[a, b]]", "[a][b]", "[don't, won't]", "[x, it's]", "- - a",
-                 "several spaces", "_MAX_FLOW_DEPTH", "Never raises"):
+                 "several spaces", "_MAX_FLOW_DEPTH", "[a, b # c]", '{"a": b}',
+                 "raise on any ``str`` input", "not a proof"):
         assert form in doc, form
+    assert "Never raises" not in doc
 
 
 def test_flow_nesting_is_capped_and_nothing_raises():
@@ -430,16 +470,31 @@ def test_flow_nesting_is_capped_and_nothing_raises():
         assert [k for k, _ in found] == ["k"] and "nested more than" in found[0][1], (n, found)
         found = fm.yaml_hazards("k: " + "{a: " * n + "x" + "}" * n + "\n")
         assert [k for k, _ in found] == ["k"], (n, found)
-    # whatever the input, yaml_hazards returns a list (load_graph runs it on
-    # every entry): brackets, quotes, colons, dashes, hashes and indentation
+    # yaml_hazards returns a list of (str, str) for the str inputs tried here
+    # (load_graph runs it on every entry): brackets, quotes, colons, dashes,
+    # hashes, tabs, carriage returns and indentation, alone or as a value
     import random
     rng = random.Random(72)
-    alphabet = ["[", "]", "{", "}", "'", '"', ":", ": ", "-", "- ", ",", " #", "#", " ", "  ", "\n", "a", "|", "\\"]
-    for _ in range(3000):
+    alphabet = ["[", "]", "{", "}", "'", '"', ":", ": ", "-", "- ", ",", " #", "#", " ", "  ",
+                "\n", "a", "|", "\\", "\t", "\r", "\r\n"]
+    for i in range(6000):
         text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 40)))
-        assert isinstance(fm.yaml_hazards(text), list), text
+        if i % 2:
+            text = "k: " + text
+        found = fm.yaml_hazards(text)
+        assert isinstance(found, list), text
+        assert all(isinstance(x, tuple) and len(x) == 2 and all(isinstance(y, str) for y in x)
+                   for x in found), (text, found)
     deep = "k: " + "[" * 3000 + "'" + "]" * 3000 + "\n- " * 500
     assert isinstance(fm.yaml_hazards(deep), list)
+
+
+def test_many_quote_characters_in_a_flow_item_stay_fast():
+    import time
+    start = time.perf_counter()
+    found = fm.yaml_hazards("k: [a" + "'" * 60000 + "]\n")
+    assert isinstance(found, list)
+    assert time.perf_counter() - start < 1.0, "quadratic in the number of quotes"
 
 
 def main():
