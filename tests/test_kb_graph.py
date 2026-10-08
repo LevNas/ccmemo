@@ -1055,6 +1055,111 @@ def test_schema4_yaml_unsafe_value_gate():
         assert notes and all("could not be checked (IndexError: boom)" in d for d in notes), notes
 
 
+def _strict_kb(base, entries):
+    root = os.path.join(base, "repo", ".claude", "knowledge", "entries")
+    os.makedirs(root)
+    for name, fm in entries.items():
+        with open(os.path.join(root, name), "w", encoding="utf-8") as f:
+            f.write(f"---\n{fm}\n---\n\nx\n")
+    return root
+
+
+STRICT_ENTRIES = {
+    "20260701-100000-a-colon.md": "title: ADR: x",
+    "20260701-100001-a-hash.md": "title: issue #12 fix",
+    "20260701-100002-a-typed.md": "title: ok typed\ncreated: 2026-10-06\nstatus: yes\nv: null\nsuperseded_by:",
+    "20260701-100003-a-list.md": 'title: ok list\ntags: "#a #b"\nlinks:\n  - x\n  - y',
+}
+
+
+def _strict_checks(root, *extra):
+    res = run_cli(root, "--json", "lint", *extra)
+    return res, {(os.path.basename(f["id"])[18:], f["check"]): f for f in json.loads(res.stdout)
+                 if f["check"].startswith("yaml-strict")}
+
+
+def _has_pyyaml():
+    try:
+        import yaml  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def test_strict_yaml_skips_loudly_without_pyyaml():
+    """PyYAML hidden from the child: one stderr line, same stdout shape and exit code."""
+    with tempfile.TemporaryDirectory() as base:
+        root = _strict_kb(base, STRICT_ENTRIES)
+        code = ("import sys, runpy; sys.modules['yaml'] = None; "
+                "sys.argv = ['kb_graph.py'] + sys.argv[1:]; "
+                "runpy.run_path(%r, run_name='__main__')" % KB_GRAPH)
+
+        def run(*extra):
+            return subprocess.run([sys.executable, "-c", code, "--root", root, "--json", "lint", *extra],
+                                  capture_output=True, text=True, timeout=30)
+        plain, strict = run(), run("--strict-yaml")
+        assert strict.returncode == plain.returncode, (plain.returncode, strict.returncode)
+        assert strict.stdout == plain.stdout
+        assert strict.stderr.count("yaml-strict: skipped") == 1 and "PyYAML" in strict.stderr, strict.stderr
+        assert "yaml-strict" not in plain.stderr
+
+
+def test_strict_yaml_findings_with_pyyaml():
+    if not _has_pyyaml():
+        print("      (skipped: PyYAML not importable; run with `uv run --with pyyaml`)")
+        return
+    with tempfile.TemporaryDirectory() as base:
+        root = _strict_kb(base, STRICT_ENTRIES)
+        plain_res, plain = _strict_checks(root)
+        assert plain == {}, plain  # no flag -> nothing, even with PyYAML
+        res, got = _strict_checks(root, "--strict-yaml")
+        assert set(got) == {("colon.md", "yaml-strict-rejected"), ("hash.md", "yaml-strict-mismatch")}, got
+        assert all(f["severity"] == "advisory" for f in got.values())
+        assert "line 2, column" in got[("colon.md", "yaml-strict-rejected")]["detail"], got
+        assert got[("hash.md", "yaml-strict-mismatch")]["detail"].endswith(": title"), got
+        assert "issue" not in got[("hash.md", "yaml-strict-mismatch")]["detail"].split(":")[-1]
+        assert res.returncode == plain_res.returncode  # exit code unchanged
+        assert "skipped" not in res.stderr
+        # files filter works as for other checks
+        _, only = _strict_checks(root, "--strict-yaml", os.path.join(root, "20260701-100001-a-hash.md"))
+        assert set(only) == {("hash.md", "yaml-strict-mismatch")}, only
+
+
+def test_strict_yaml_fault_is_a_finding_and_load_graph_is_untouched():
+    if not _has_pyyaml():
+        print("      (skipped: PyYAML not importable)")
+        return
+    import yaml
+    with tempfile.TemporaryDirectory() as base:
+        root = _strict_kb(base, STRICT_ENTRIES)
+        original = yaml.safe_load
+
+        def boom(_b):
+            raise RuntimeError("boom")
+        yaml.safe_load = boom
+        try:
+            found, available = kb_graph.strict_yaml_findings(root)
+            nodes, _e, problems = kb_graph.load_graph(root)
+        finally:
+            yaml.safe_load = original
+        assert available and len(found) == len(STRICT_ENTRIES), found
+        assert all("could not be checked (RuntimeError: boom)" in d for _n, _c, d in found), found
+        assert len(nodes) == len(STRICT_ENTRIES)
+        assert not any(c.startswith("yaml-strict") for _n, c, _d in problems)
+        # through cmd_lint: exit code is the same with and without the faulty check
+        codes = []
+        for strict in (False, True):
+            yaml.safe_load = boom
+            try:
+                try:
+                    kb_graph.cmd_lint(nodes, [], problems, None, [], True, root=root, strict_yaml=strict)
+                except SystemExit as e:
+                    codes.append(e.code)
+            finally:
+                yaml.safe_load = original
+        assert codes[0] == codes[1], codes
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

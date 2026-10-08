@@ -13,7 +13,8 @@ Subcommands:
   link-add <src> <dst>   deterministically append a typed link line to src
   supersede <old> <new>  mark old as replaced by new: frontmatter pair,
                          body-top banner, amends back-link — in one atomic step
-  lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings)
+  lint [files...]        deterministic checks (pre-commit friendly, exit 1 on findings);
+                         --strict-yaml also compares with PyYAML (advisory, needs PyYAML)
   migrate --to 3         add the schema-3 fields (id, generated) where missing
   verify <entry> --by A  append a verified event (independent check of the content)
   rename <entry> <slug>  change the slug only; rewrite every link to the entry
@@ -130,7 +131,7 @@ SCHEMA_CHECKS = {
 # Informational at every schema: they describe the state of the knowledge,
 # not a broken convention, so they never fail a pre-commit lint.
 ALWAYS_ADVISORY = {"verification-expired", "stale-after-passed", "duplicate-title",
-                   "divergent-mirror"}
+                   "divergent-mirror", "yaml-strict-rejected", "yaml-strict-mismatch"}
 
 
 def kb_schema_version(root, override=None):
@@ -659,9 +660,84 @@ def divergent_mirrors(db):
     return findings
 
 
+def _stringify(value):
+    """Read a parse_block value the way yaml.BaseLoader does: all scalars as text."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return [_stringify(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _stringify(v) for k, v in value.items()}
+    return str(value)
+
+
+def _yaml_error_line(exc):
+    """First line of a PyYAML error, with the file line and column when it has them."""
+    first = (str(exc).splitlines() or [type(exc).__name__])[0]
+    mark = getattr(exc, "problem_mark", None)
+    if mark is None:
+        return first
+    # the block starts on file line 2 (line 1 is the opening `---`)
+    return f"{getattr(exc, 'problem', None) or first} (line {mark.line + 2}, column {mark.column + 1})"
+
+
+def strict_yaml_findings(root):
+    """Opt-in `lint --strict-yaml`: compare ccmemo's parser with PyYAML.
+
+    Two comparisons per entry, no types: (1) `yaml.safe_load` raises
+    `yaml.YAMLError` -> `yaml-strict-rejected`; (2) `yaml.BaseLoader` (every
+    value as text) and `parse_block` disagree on a top-level key ->
+    `yaml-strict-mismatch`. Returns (findings, available). Each block is checked
+    on its own: a fault becomes a finding, never an exception, and this is
+    called from `lint` only, never from `load_graph`.
+    """
+    try:
+        import yaml
+    except ImportError:
+        return [], False
+    findings = []
+    root = os.path.abspath(root)
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in sorted(filenames):
+            if not fn.endswith(".md") or fn == "CLAUDE.md":
+                continue
+            path = os.path.join(dirpath, fn)
+            nid = os.path.relpath(path, root)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    block = _frontmatter.split(f.read())[0]
+                if not block or not block.strip():
+                    continue
+                try:
+                    yaml.safe_load(block)
+                except yaml.YAMLError as exc:
+                    findings.append((nid, "yaml-strict-rejected", _yaml_error_line(exc)))
+                    continue
+                strict = yaml.load(block, Loader=yaml.BaseLoader)  # noqa: S506
+                ours = _stringify(_frontmatter.parse_block(block))
+                if not isinstance(strict, dict):
+                    strict = {}
+                keys = sorted(k for k in set(strict) | set(ours)
+                              if strict.get(k) != ours.get(k))
+                if keys:
+                    findings.append((nid, "yaml-strict-mismatch",
+                                     "read differently by PyYAML and ccmemo: " + ", ".join(keys)))
+            except Exception as exc:  # noqa: BLE001
+                findings.append((nid, "yaml-strict-mismatch",
+                                 f"could not be checked ({type(exc).__name__}: {exc}) — "
+                                 "please report this as a ccmemo bug"))
+    return findings, True
+
+
 def cmd_lint(nodes, edges, problems, registry_path, only_files, as_json, schema=1,
-             root=None):
+             root=None, strict_yaml=False):
     findings = list(problems)
+    if strict_yaml and root is not None:
+        extra, available = strict_yaml_findings(root)
+        if not available:
+            print("yaml-strict: skipped — PyYAML is not importable "
+                  "(try: uv run --with pyyaml ...)", file=sys.stderr)
+        findings.extend(extra)
     for cyc in supersede_cycles(edges):
         for nid in cyc:  # one finding per member so the only_files filter still hits
             findings.append((nid, "supersede-cycle", " → ".join(cyc + [cyc[0]])))
@@ -1596,6 +1672,12 @@ def main():
                     help="limit findings to these files (e.g. staged entries)")
     li.add_argument("--registry", default=None,
                     help="tag registry markdown (default: <root>/../CLAUDE.md)")
+    li.add_argument("--strict-yaml", action="store_true", dest="strict_yaml",
+                    help="also compare each frontmatter with PyYAML (needs PyYAML; "
+                         "advisory, never changes the exit code): yaml-strict-rejected "
+                         "when safe_load raises, yaml-strict-mismatch when it reads "
+                         "the values as text differently from ccmemo. Typed values "
+                         "(yes, null, numbers, dates) are not compared")
     ur = sub.add_parser(
         "union-recover",
         help="lossless union of two append-only copies of one file (issue #24)",
@@ -1658,7 +1740,8 @@ def main():
     elif args.cmd == "lint":
         registry = args.registry or os.path.join(args.root, "..", "CLAUDE.md")
         cmd_lint(nodes, edges, problems, registry, args.files, args.json,
-                 schema=kb_schema_version(args.root, args.schema), root=args.root)
+                 schema=kb_schema_version(args.root, args.schema), root=args.root,
+                 strict_yaml=args.strict_yaml)
 
 
 if __name__ == "__main__":
