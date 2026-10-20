@@ -20,8 +20,13 @@ Maintain plans and task progress across Claude Code sessions so that work can be
 Delegate the plan/task work to a Sonnet subagent to minimize main context consumption.
 
 1. Determine the operation mode from user input or session context
-2. Prepare structured input fields for the subagent
-3. Spawn a subagent with the following configuration:
+2. **For `create-plan` only, settle with the user first.** The plan written in this mode is a spec: a record of decisions already made, which later sessions build from. The subagent cannot talk to the user, so do these in the main session before spawning it:
+   - If a decision the plan needs is still open, settle it with the user now (with ccharness installed, `ccharness:settle-decisions`). Do not leave it for the subagent to fill in.
+   - Show the user how the work will be verified (Verification) and get their agreement before the plan is written. Prefer checks that already exist (tests, commands) and as few as will do.
+   - Collect what was considered and left out, with the reason (Out of Scope). If the conversation has none, ask the user; "none" is not an answer.
+   - Put the agreed Verification and Out of Scope in the `settled` field below.
+3. Prepare structured input fields for the subagent
+4. Spawn a subagent with the following configuration:
 
 ```
 Agent(
@@ -47,6 +52,9 @@ Agent(
     ### tags_hint（推奨タグ）
     {tags_hint}
 
+    ### settled（create-plan: agreed Verification and Out of Scope）
+    {settled}
+
     ## Instructions
     1. Read the procedure file at: {plugin_root}/skills/plan-task/procedure.md
     2. Execute the procedure section matching the operation mode: {mode}
@@ -63,11 +71,12 @@ Replace the placeholders:
 - `{why}` — why this operation is needed now (e.g., "new session started, need to check for incomplete work")
 - `{context}` — relevant background (current branch, related issues, recently modified files, active plan slug if known)
 - `{tags_hint}` — recommended tags for any knowledge entries that may be created (especially relevant for `complete` mode)
+- `{settled}` — for `create-plan`: the Verification the user agreed to and the Out of Scope items, from step 2; for other modes, "n/a"
 - `{plugin_root}` — the plugin's installation path (shown in the skill loading message as "Base directory for this skill")
 - `{project_root}` — the project working directory
 
-4. Report the subagent's result to the user (operation performed, files modified, current status)
-5. If the subagent returns knowledge candidates (typically from `complete` mode), invoke `record-knowledge` for each candidate using the structured fields provided
+5. Report the subagent's result to the user (operation performed, files modified, current status). If a `create-plan` subagent returns what is missing instead of writing the plan, settle that with the user as in step 2 and spawn it again.
+6. If the subagent returns knowledge candidates (typically from `complete` mode), invoke `record-knowledge` for each candidate using the structured fields provided
 
 IMPORTANT: The procedure file path uses the plugin's base directory, NOT the project directory. Read the "Base directory for this skill" line from the skill loading message to determine the correct path.
 
