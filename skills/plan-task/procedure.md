@@ -103,7 +103,7 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 ├── readme.md                  # Index of all plans (status and summary)
 ├── <slug>-<account>-<date>/
 │   ├── readme.md              # Handoff notes: current state, next actions, blockers
-│   ├── plan-v1.md             # Initial plan (approach, design decisions, context)
+│   ├── plan-v1.md             # Initial plan, a spec (Approach, Decisions, Out of Scope, Verification, ...)
 │   ├── plan-v2.md             # Revised plan (v1 remains unchanged)
 │   ├── todo.md                # Current task progress (frequently updated)
 │   ├── session_state.md        # Lightweight checkpoint: current state, next action, blockers
@@ -240,6 +240,7 @@ If the plan is linked to an issue in your project's issue tracker:
 
 - Do NOT edit existing `plan-vN.md` files — create `plan-vN+1.md` instead
 - `plan-vN+1.md` has the same sections as `plan-v1.md` (see Creating a Plan, step 4), including a non-empty Out of Scope (carry over the items of `plan-vN.md` that still hold, and add what the revision left out)
+- The Out of Scope items come from the Input's `settled` field and the current plan. If neither has any, create nothing and return what is missing, as in Creating a Plan; do not invent items
 - Reset `todo.md` to match the new plan (carry over incomplete items)
 - Update `<slug>/readme.md` with which version is current and why the revision was needed
 - Claude Code reads only the latest `plan-vN.md` and `todo.md`

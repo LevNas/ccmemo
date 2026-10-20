@@ -57,14 +57,21 @@ check("When to Use points single-session work to plan mode",
 check("revised plans keep the sections",
       "has the same sections as `plan-v1.md`" in procedure)
 
+revising = procedure.split("## Revising a Plan", 1)[1].split("\n## ", 1)[0]
+check("revising stops when no Out of Scope source exists",
+      "If neither has any, create nothing and return what is missing" in revising)
+check("directory tree describes plan-v1.md as a spec with Out of Scope",
+      "plan-v1.md             # Initial plan, a spec (Approach, Decisions, Out of Scope" in procedure)
+
 for rule in (
-    "For `create-plan` only, settle with the user first",
+    "For `create-plan` and `revise-plan`, settle with the user first",
     "ccharness:settle-decisions",
     "get their agreement before the plan is written",
     '"none" is not an answer',
-    "### settled（create-plan: agreed Verification and Out of Scope）",
+    "For `revise-plan`: the Out of Scope items are the ones of the current plan that still hold",
+    "### settled（create-plan / revise-plan: agreed Verification and Out of Scope）",
     "{settled}",
-    "returns what is missing instead of writing the plan",
+    "`revise-plan` subagent returns what is missing instead of writing the plan",
 ):
     check("SKILL.md: " + rule, rule in skill)
 

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.32.1] - 2026-10-20
+
+### Fixed
+- `plan-task` `revise-plan`: 1.32.0 required a non-empty Out of Scope in
+  revised plans but passed `settled` only to `create-plan`, so revising a plan
+  with no Out of Scope section left the subagent with nothing to carry over,
+  no one to ask, and a rule against inventing items. The main session's step 2
+  now covers `revise-plan` too: it collects the Out of Scope items (those of
+  the current plan that still hold plus what the revision leaves out, asking
+  the user when there are none) and agrees the Verification again only if the
+  revision changes it. The subagent, with neither `settled` nor the current
+  plan giving Out of Scope items, creates nothing and returns what is missing.
+  The `settled` field heading now names both modes.
+- `procedure.md` directory tree: `plan-v1.md` is described as a spec with its
+  sections instead of "approach, design decisions, context".
+
 ## [1.32.0] - 2026-10-20
 
 ### Added
