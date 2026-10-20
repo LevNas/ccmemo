@@ -78,7 +78,7 @@ The rest of this document describes **Git-tracked mode**. For issue-centric mode
 
 ## When to Use
 
-- Starting a multi-step task that may span multiple sessions
+- Starting a multi-step task that may span multiple sessions. Work that fits in one session does not need a plan here: Claude Code's plan mode is enough
 - Resuming work — check `.claude/tasks/readme.md` for incomplete plans
 - Updating progress on an existing plan
 - Closing out or archiving a completed plan
@@ -178,6 +178,10 @@ task_dir: <slug>-<account>-<date>
 
 ## Creating a Plan
 
+The plan is a spec: a record of decisions already made, which later sessions build from. You cannot ask the user anything, so write only what the Input, the files and the knowledge base already settle.
+
+Before step 1: if the Input's `settled` field lacks the agreed Verification or the Out of Scope items, create nothing. Return what is missing instead, so the main session can settle it with the user.
+
 1. Create `.claude/tasks/<slug>-<account>-<date>/` following the naming convention
 2. **Issue link check** (strongly recommended):
    a. Search for related issues: `gh issue list -S "<keywords>"` (includes open issues)
@@ -188,11 +192,22 @@ task_dir: <slug>-<account>-<date>
    - Past pitfalls (`#pitfall`) that may recur
    - Design decisions and their rationale
    - Related tooling or configuration knowledge
-4. Write `plan-v1.md` with: approach, design decisions, background, completion criteria. If related knowledge was found in step 3, include a **Related Knowledge** section:
-   ```markdown
-   ## Related Knowledge
-   - [entry title](../../knowledge/entries/YYYY/MM/slug.md) — why it's relevant
-   ```
+4. Write `plan-v1.md` with these sections, in this order. Headings may use the repository's language instead (for example 範囲外 for Out of Scope, 確かめ方 for Verification).
+   - `## Approach` — the shape of the solution and the background it answers
+   - `## Decisions` — the design decisions made, each with its reason
+   - `## Out of Scope` — what was considered and left out, each with its reason, from `settled`. Required: at least one entry, and "none" is not an entry. The things the user refused are often the most useful lines in the plan
+   - `## Verification` — how the work will be checked, as agreed with the user, from `settled`
+   - `## Completion criteria`
+   - `## Related Knowledge` — only if step 3 found related entries:
+     ```markdown
+     ## Related Knowledge
+     - [entry title](../../knowledge/entries/YYYY/MM/slug.md) — why it's relevant
+     ```
+
+   While writing:
+   - Write only decisions that the Input, the files or the knowledge base state. Never invent a decision to fill a section.
+   - If a section has nothing settled for it, leave the plan unwritten and return what is missing, as above.
+   - No user stories: record the decisions directly.
 5. **Capture detailed context**: If the plan involves context too detailed for `plan-v1.md` (investigation results, API behavior, configuration specifics, design trade-off analysis), create `context-YYYYMMDD-HHMMSS-topic.md` in the task directory. Plans summarize *what* and *why*; context files preserve the *details* that future sessions need to resume work. Only add knowledge-worthy findings to the knowledge candidates list
 6. Write `todo.md` with a checkbox task list
 7. **Register tasks with TaskCreate**: For each top-level task in `todo.md`, call `TaskCreate` with a description that includes the task directory path (e.g., `[plan-task-improve-i39] Implement TaskCreate/TaskUpdate sync`). This enables quick recovery after context compaction via `TaskList`
@@ -224,6 +239,7 @@ If the plan is linked to an issue in your project's issue tracker:
 ## Revising a Plan
 
 - Do NOT edit existing `plan-vN.md` files — create `plan-vN+1.md` instead
+- `plan-vN+1.md` has the same sections as `plan-v1.md` (see Creating a Plan, step 4), including a non-empty Out of Scope (carry over the items of `plan-vN.md` that still hold, and add what the revision left out)
 - Reset `todo.md` to match the new plan (carry over incomplete items)
 - Update `<slug>/readme.md` with which version is current and why the revision was needed
 - Claude Code reads only the latest `plan-vN.md` and `todo.md`

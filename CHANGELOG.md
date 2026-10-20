@@ -2,9 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.32.0] - 2026-10-20
 
 ### Added
+- `plan-task` `create-plan` writes the plan as a spec: a record of decisions
+  already made, which later sessions build from. The idea is the `to-spec`
+  skill of mattpocock/skills (commit `5beb35b`, MIT), rewritten rather than
+  copied, and split between the two readers of plan-task:
+  - The main session (`SKILL.md`, new step 2, `create-plan` only) settles with
+    the user before it spawns the subagent, which cannot talk to the user: it
+    settles open decisions first (with ccharness installed,
+    `ccharness:settle-decisions`), shows the Verification and gets the user's
+    agreement, and collects the Out of Scope items ("none" is not an answer).
+    It passes them in a new `settled` input field. When the subagent returns
+    what is missing, the main session settles it and spawns it again.
+  - The subagent (`procedure.md`, Creating a Plan) writes `plan-v1.md` with
+    six sections in order: Approach, Decisions, Out of Scope, Verification,
+    Completion criteria, Related Knowledge (only when knowledge was found).
+    Headings may use the repository's language. Out of Scope needs at least
+    one entry, and "none" is not an entry. It writes only what the input, the
+    files or the knowledge base state, never invents a decision to fill a
+    section, and writes no user stories. If `settled` lacks the Verification
+    or the Out of Scope items, it creates nothing and returns what is missing.
+  - Revised plans (`plan-vN+1.md`) keep the same sections, carrying over the
+    Out of Scope items that still hold.
+  - Left out from upstream: user stories, publishing the spec to an issue
+    tracker, and a separate template file.
+- Tests: `tests/test_plan_task_spec.py` checks the six sections and their
+  order, the Out of Scope rule, the subagent's rules and the main session's
+  settle step.
 - `lint --strict-yaml`: an opt-in comparison of each entry's frontmatter with
   PyYAML (#72). It makes two checks and never compares types:
   `yaml-strict-rejected` when `yaml.safe_load` raises (the detail is PyYAML's
@@ -21,6 +47,11 @@ All notable changes to this project will be documented in this file.
   unchanged. It runs from `lint` only, not `load_graph`, and a fault in one
   entry's check becomes a `could not be checked (...)` finding. The hook still
   needs only the standard library.
+
+### Changed
+- `plan-task` When to Use: work that fits in one session does not need a
+  plan; Claude Code's plan mode is enough. The skill description is unchanged,
+  so the always-on listing does not grow.
 
 ## [1.31.0] - 2026-10-06
 
