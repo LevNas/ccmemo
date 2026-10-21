@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.33.0] - 2026-10-21
+
+### Added
+- `record-knowledge`: a Decision Entries section in `procedure.md`. A decision
+  is written in the decision form only when it passes three tests (hard to
+  reverse, surprising without context, a real trade-off); otherwise it becomes
+  an ordinary entry or stays in the issue or pull request. A decision entry
+  opens with one to three sentences (the problem, the decision, why), has a
+  rejected-alternatives section only when a rejection is not obvious or a
+  request was turned down, gives durable reasons ("no time right now" is a
+  deferral), and carries the `#decision` tag rather than a new `type` value.
+  When to Record points decisions to the section. Adapted from
+  mattpocock/skills (`domain-modeling` ADR format and `triage` out-of-scope
+  records, commit `5beb35b`, MIT).
+- Starter tag registry (`assets/knowledge-CLAUDE.md`) lists `#decision`.
+- `tests/test_record_knowledge_decision.py` checks that the procedure keeps
+  these rules and that the skill's description did not grow.
+
 ## [1.32.1] - 2026-10-20
 
 ### Fixed

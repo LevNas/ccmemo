@@ -9,7 +9,7 @@ Capture tacit knowledge discovered during work and make it available for future 
 - Undocumented behavior, quirks, or pitfalls
 - Hardware/service characteristics shared by the user
 - Dependencies or coupled settings discovered during configuration
-- Decision rationale (why a particular approach was chosen)
+- Decision rationale (why a particular approach was chosen) — tag with `#decision`; see Decision Entries for when to use the decision form
 - Root causes and fixes found during troubleshooting
 - **Claude Code's own mistakes and prevention measures** — errors pointed out by the user, incorrect output, tool misuse, etc. Record specifically: what happened, why it was wrong, and what to do next time. Tag with `#pitfall`
 - **Environment-specific behavior** — when a discovery is tied to a specific PC, OS, network, or toolchain version, include the environment details in the entry body. Tag with `#environment-specific`
@@ -112,6 +112,28 @@ description: "<trigger condition — WHEN to open this entry, not what it says>"
 | `detail` | Focused entry referenced from an overview | Deep-dive into a specific aspect of a topic |
 | `fragment` | Isolated observation, not yet promoted | Quick notes that may become knowledge later |
 | `synthesis` | Cross-cutting insight from multiple entries | Integrating patterns across entries |
+
+### Decision Entries
+
+Write a decision in the decision form only when it passes all three tests:
+
+1. **Hard to reverse**: changing your mind later has a real cost.
+2. **Surprising without context**: a future reader would ask "why did they do it this way?"
+3. **A real trade-off**: there were real alternatives, and one was picked for stated reasons.
+
+If any test fails, write an ordinary entry, or leave the decision in the issue or pull request where it was made. The tests decide the form, not whether to record: that is decided first, by When to Record.
+
+A decision entry:
+
+- **Opens with one to three sentences** (required): the problem, what was decided, and why. A reader who stops there has the decision.
+- **Has a rejected-alternatives section only when** the reason an alternative lost is not obvious, or the decision turns down a proposal or request. A turned-down request is recorded so that the earlier answer can be shown when the same request comes back.
+- **Adds history or consequences only when they help**: background a reader needs, or an effect downstream that is not obvious.
+- **Gives durable reasons**: scope, a constraint, a trade-off. "No time right now" is a deferral, not a decision; do not record it as one.
+- **Carries the `#decision` tag.** Do not add a `type` value for it: `type` describes the entry's structure (see Entry Types), and a decision entry can have any of them.
+
+When a decision is reversed or changed later, follow the Amendment Rules: edit the entry, or supersede it. Do not reshape existing entries into this form; apply it from the next decision on.
+
+The three tests and the idea of recording turned-down requests are adapted from mattpocock/skills (`skills/engineering/domain-modeling/ADR-FORMAT.md` and `skills/engineering/triage/OUT-OF-SCOPE.md`, commit `5beb35b`, MIT).
 
 ### Tag Guidelines
 - Assign tags autonomously for optimal searchability
